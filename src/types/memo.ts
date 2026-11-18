@@ -1,0 +1,274 @@
+export type DocumentKey =
+  | 'branchProposal'
+  | 'outstanding'
+  | 'partyPerformance'
+  | 'overdue'
+  | 'accountStatement'
+  | 'cibReport'
+  | 'costOfFund';
+
+export type MemoTabKey = 'manual' | 'ic' | 'mec' | 'board' | 'sanction';
+
+export interface DocumentUploadMeta {
+  key: DocumentKey;
+  label: string;
+  acceptedFormats: string;
+  uploaded: boolean;
+  fileName: string;
+  parsing: boolean;
+  error: string | null;
+  rawTextPreview?: string;
+}
+
+export interface Section3Row {
+  sl: string;
+  nameOfConcern: string;
+  bankOrNbfi: string;
+  natureOfFacility: string;
+  limit: string;
+  outstanding: string;
+  overdueEol: string;
+  expiryDate: string;
+  clStatus: string;
+}
+
+export interface Section4Row {
+  status: string;
+  unitBorrower: string;
+  unitGuarantor: string;
+  otherBorrower: string;
+  otherGuarantor: string;
+  remarks: string;
+}
+
+export interface Section5Row {
+  sl: string;
+  typeOfCase: string;
+  caseNo: string;
+  filingDate: string;
+  amount: string;
+  previousDate: string;
+  nextDate: string;
+  presentStatus: string;
+}
+
+export interface Section6Row {
+  sl: string;
+  authority: string;
+  lastInspectionDate: string;
+  objectionStatus: string;
+  objections: string;
+  branchReply: string;
+}
+
+export interface Section7PrimaryRow {
+  particulars: string;
+  value: string;
+}
+
+export interface Section7ValuationRow {
+  schedule: string;
+  origBranchMv: string;
+  origBranchFsv: string;
+  origSurvMv: string;
+  origSurvFsv: string;
+  presBranchMv: string;
+  presBranchFsv: string;
+  presSurvMv: string;
+  presSurvFsv: string;
+  presAvMv: string;
+  presAvFsv: string;
+}
+
+export interface Section9Row {
+  sl: string;
+  referenceNo: string;
+  date: string;
+  limit: string;
+  remarks: string;
+}
+
+export interface Section10Particulars {
+  nameOfClient: string;
+  uniqueCustomerId: string;
+  awcdMsdAccount: string;
+  businessTypeNature: string;
+  businessManagementType: string;
+  clientType: string;
+  keyPersonPhone: string;
+  address: string;
+  officeBusinessAddress: string;
+  factoryAddress: string;
+  purposeOfInvestment: string;
+  limitOfInvestment: string;
+  modeOfInvestment: string;
+  lastVisitDate: string;
+  stockPosition: string;
+  fixedAsset: string;
+  businessNetWorth: string;
+  insuranceCoverage: string;
+  tradeLicenseValidity: string;
+  otherRegulatoryDocuments: string;
+  dateOfOriginalInvestment: string;
+  firstDisbursementManager: string;
+  firstDateOfClassification: string;
+}
+
+export interface Section10DirectorRow {
+  name: string;
+  age: string;
+  education: string;
+  designation: string;
+  sharePct: string;
+  experience: string;
+  netWorth: string;
+}
+
+export interface Section10BankDirectorRow {
+  name: string;
+  bankNbfi: string;
+  designation: string;
+  sharePct: string;
+  numShares: string;
+}
+
+export interface Section11Row {
+  year: string;
+  grossSales: string;
+  grossProfit: string;
+  netProfit: string;
+  totalAsset: string;
+  totalLiabilities: string;
+  netWorth: string;
+}
+
+export interface BranchProposalData {
+  referenceNo: string; // #64#
+  proposalDate: string; // #65#
+  branchName: string;
+  accountNo: string;
+  subjectText: string;
+  limitOriginal: string; // #6#
+  limitRSD: string;
+  securityMV: string; // #33#
+  securityFSV: string; // #34#
+  justificationText: string;
+  previousBoardDecisions: string;
+  natureOfBusiness: string; // #54#
+  sec2Limit: string; // #56#
+  sec2Validity: string; // #58#
+  sec2Overdue: string;
+  sec2Recovery: string;
+  sec2Remarks: string;
+  section3AsOnDate: string;
+  section3Rows: Section3Row[];
+  section4CibDate: string;
+  section4Rows: Section4Row[];
+  section5StatusNote: string;
+  section5Rows: Section5Row[];
+  section6StatusNote: string;
+  section6Rows: Section6Row[];
+  section7PrimaryNote: string;
+  section7PrimaryRows: Section7PrimaryRow[];
+  section7PrimaryTotal: string;
+  section7CollateralNote: string;
+  section7CollateralSchedules: string[];
+  section7ValuationRows: Section7ValuationRow[];
+  section7CoveragePct: string;
+  section7Others: string;
+  section8SourceOfRepayment: string;
+  section9Rows: Section9Row[];
+  section10Particulars: Section10Particulars;
+  section10Directors: Section10DirectorRow[];
+  section10BankDirectors: Section10BankDirectorRow[];
+  section11FinancialsNote: string;
+  section11Rows: Section11Row[];
+  section12BranchVisitReport: string;
+  section15BranchBicRec: string;
+  section16BranchRec: string;
+}
+
+export interface OutstandingData {
+  princOutBDT: number | null; // #7#
+  chargeBDT: number | null; // #8#
+  profitOutBDT: number | null; // #10#
+  compensationBDT: number | null; // #11#
+  unappliedProBDT: number | null; // #12#
+  netOutBDT: number | null; // #25#
+}
+
+export interface PartyPerformanceData {
+  productName: string; // #5# and #55#
+  recoveryAmtBDT: number | null; // #60#
+  printDate: string; // #68#
+}
+
+export interface OverdueData {
+  overdueAmountBDT: number | null; // #59#
+}
+
+export interface AccountStatementData {
+  accountNumber: string; // #2#
+  acNo: string; // #36#
+  branchName: string; // #3# (2nd line of doc)
+  customerId: string; // #69#
+  lastBalanceBDT: number | null; // #35#
+}
+
+export interface CibReportData {
+  cibDate: string; // #62#
+}
+
+export interface CostOfFundData {
+  surplusDeficitBDT: number | null; // #31#
+}
+
+export interface ManualInputsData {
+  proposalDate: string; // #1#
+  waiverAmount: string; // #4#
+  settlementAmount: string; // #27#
+  settlementPeriod: string; // #28#
+  waiverRecClientBranch: string; // #45#
+  waiverRecHO: string; // #47#
+  sourceOfRepayment: string; // Section 8
+}
+
+export interface AiSectionsData {
+  justification: string | null; // #51#
+  branchVisit: string | null; // Section 12
+  samdObservation: string | null; // Section 15
+}
+
+export interface ExtractedDocumentsState {
+  branchProposal: BranchProposalData | null;
+  outstanding: OutstandingData | null;
+  partyPerformance: PartyPerformanceData | null;
+  overdue: OverdueData | null;
+  accountStatement: AccountStatementData | null;
+  cibReport: CibReportData | null;
+  costOfFund: CostOfFundData | null;
+}
+
+export interface MissingFieldItem {
+  code: string;
+  label: string;
+  source: string;
+  reason: string;
+}
+
+export interface ResolvedICMemo {
+  placeholders: Record<string, string>;
+  missingFields: MissingFieldItem[];
+  sourceOfRepayment: string;
+  justificationLines: string; // #51#
+  branchVisitReport: string;
+  samdObservation: string;
+  branchProposal: BranchProposalData | null;
+}
+
+export interface MemoEngineDefinition {
+  id: Exclude<MemoTabKey, 'manual'>;
+  name: string;
+  status: 'implemented' | 'coming_soon';
+  description: string;
+}

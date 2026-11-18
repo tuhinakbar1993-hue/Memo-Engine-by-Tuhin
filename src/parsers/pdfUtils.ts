@@ -150,7 +150,7 @@ export async function renderPdfPagesToImages(
   file: File,
   maxWidth = 1400,
   maxPages = 10
-): Promise<Array<{ mimeType: string; data: string }>> {
+): Promise<Array<{ mimeType: string; data: string; width: number; height: number }>> {
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(buffer),
@@ -185,9 +185,13 @@ export async function renderPdfPagesToImages(
     return {
       mimeType: 'image/jpeg',
       data: base64,
+      width: canvas.width,
+      height: canvas.height,
     };
   });
 
   const results = await Promise.all(renderPromises);
-  return results.filter((r): r is { mimeType: string; data: string } => r !== null);
+  return results.filter(
+    (r): r is { mimeType: string; data: string; width: number; height: number } => r !== null
+  );
 }

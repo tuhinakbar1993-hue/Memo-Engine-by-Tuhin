@@ -9,7 +9,16 @@ import type {
   PartyPerformanceData,
 } from '../types/memo';
 import { cleanText, parseIndianNumber } from '../utils/numberFormat';
-import { extractPdfLines, PdfTextItem, renderPdfPagesToImages } from './pdfUtils';
+import {
+  parseBranchProposalFromPdf,
+  parseBranchProposalFromStructured,
+} from './branchProposalParser';
+import {
+  extractPdfLines,
+  PdfLine,
+  PdfTextItem,
+  renderPdfPagesToImages,
+} from './pdfUtils';
 import {
   extractDocxContent,
   extractExcelContent,
@@ -97,7 +106,78 @@ function extractDateFromText(text: string): string {
 export type StageCallback = (stage: string) => void;
 
 /**
- * 1. Branch Proposal (Scanned PDF, Images, Word .docx, or Excel .xlsx/.xls -> Gemini extraction)
+ * Local non-AI OCR fallback using Tesseract.js — invoked ONLY for image files or
+ * image-only PDFs that contain no embedded text layer.
+ */
+async function ocrImagesToPdfLines(
+  images: Array<{ dataUrl: string; width: number; height: number }>,
+  onStage?: StageCallback
+): Promise<{ lines: PdfLine[]; rawText: string }> {
+  const { createWorker } = await import('tesseract.js');
+  const worker = await createWorker('eng');
+  const allLines: PdfLine[] = [];
+  const rawChunks: string[] = [];
+
+  try {
+    for (let i = 0; i < images.length; i++) {
+      onStage?.(`Running non-AI OCR (page ${i + 1}/${images.length})...`);
+      const img = images[i];
+      const result = await worker.recognize(img.dataUrl, undefined, {
+        blocks: true,
+        text: true,
+      });
+      const scaleX = img.width > 0 ? 595.32 / img.width : 1;
+      const scaleY = img.height > 0 ? 841.92 / img.height : 1;
+      rawChunks.push(result.data.text || '');
+
+      const pageItems: PdfTextItem[] = [];
+      for (const block of result.data.blocks ?? []) {
+        for (const para of block.paragraphs ?? []) {
+          for (const tLine of para.lines ?? []) {
+            for (const word of tLine.words ?? []) {
+              const txt = word.text?.trim();
+              if (!txt) continue;
+              const x = word.bbox.x0 * scaleX;
+              const y = 841.92 - word.bbox.y0 * scaleY;
+              const width = (word.bbox.x1 - word.bbox.x0) * scaleX;
+              const height = (word.bbox.y1 - word.bbox.y0) * scaleY;
+              pageItems.push({ text: txt, x, y, width, height, page: i + 1 });
+            }
+          }
+        }
+      }
+
+      pageItems.sort((a, b) => (Math.abs(b.y - a.y) > 4 ? b.y - a.y : a.x - b.x));
+      const pageLines: PdfLine[] = [];
+      for (const it of pageItems) {
+        const existing = pageLines.find((l) => Math.abs(l.y - it.y) <= 4.5);
+        if (existing) existing.items.push(it);
+        else pageLines.push({ y: it.y, page: i + 1, items: [it], text: '' });
+      }
+      for (const l of pageLines) {
+        l.items.sort((a, b) => a.x - b.x);
+        l.text = l.items.map((it) => it.text).join(' ');
+      }
+      allLines.push(...pageLines);
+    }
+  } finally {
+    await worker.terminate();
+  }
+
+  return { lines: allLines, rawText: rawChunks.join('\n') };
+}
+
+function getImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth || 1400, height: img.naturalHeight || 1980 });
+    img.onerror = () => resolve({ width: 1400, height: 1980 });
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * 1. Branch Proposal (Ultra-fast Non-AI rule-based extraction across PDF, DOCX, Excel, and Image)
  */
 export async function parseBranchProposalFile(
   file: File,
@@ -110,29 +190,31 @@ export async function parseBranchProposalFile(
     return cached;
   }
 
-  let payload: {
-    pages?: Array<{ mimeType: string; data: string }>;
-    structuredText?: string;
-    fileName?: string;
-  };
-
   if (isDocxFile(file)) {
     onStage?.('Reading Word (.docx)...');
     const docx = await extractDocxContent(file);
     if (!docx.rawText.trim()) {
       throw new Error('Could not extract any text or tables from the Word Branch Proposal.');
     }
-    onStage?.('Analyzing Word proposal with Gemini...');
-    payload = { structuredText: docx.rawText, fileName: file.name };
-  } else if (isExcelFile(file)) {
+    onStage?.('Extracting proposal fields...');
+    const grids = docx.tables.map((t) => t.rows);
+    const parsed = parseBranchProposalFromStructured(grids, docx.lines, docx.rawText);
+    return setCachedParse('bp', file, parsed);
+  }
+
+  if (isExcelFile(file)) {
     onStage?.('Reading Excel workbook...');
     const excel = await extractExcelContent(file);
     if (!excel.rawText.trim()) {
       throw new Error('Could not extract any worksheet content from the Excel Branch Proposal.');
     }
-    onStage?.('Analyzing Excel proposal with Gemini...');
-    payload = { structuredText: excel.rawText, fileName: file.name };
-  } else if (file.type.startsWith('image/')) {
+    onStage?.('Extracting proposal fields...');
+    const grids = excel.sheets.map((s) => s.typedRows);
+    const parsed = parseBranchProposalFromStructured(grids, excel.lines, excel.rawText);
+    return setCachedParse('bp', file, parsed);
+  }
+
+  if (file.type.startsWith('image/')) {
     onStage?.('Reading image...');
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -140,33 +222,41 @@ export async function parseBranchProposalFile(
       reader.onerror = () => reject(new Error('Failed to read image file.'));
       reader.readAsDataURL(file);
     });
-    const pages = [{ mimeType: file.type, data: dataUrl.split(',')[1] ?? '' }];
-    onStage?.('Analyzing image with Gemini...');
-    payload = { pages, fileName: file.name };
-  } else {
-    onStage?.('Rendering scanned pages...');
-    const pages = await renderPdfPagesToImages(file, 1400, 8);
-    if (pages.length === 0) {
-      throw new Error('Could not render any pages from the Branch Proposal file.');
-    }
-    onStage?.(`Analyzing ${pages.length} page${pages.length > 1 ? 's' : ''} with Gemini...`);
-    payload = { pages, fileName: file.name };
+    const dims = await getImageDimensions(dataUrl);
+    const { lines, rawText } = await ocrImagesToPdfLines(
+      [{ dataUrl, width: dims.width, height: dims.height }],
+      onStage
+    );
+    onStage?.('Extracting proposal fields...');
+    const parsed = parseBranchProposalFromPdf(lines, rawText);
+    return setCachedParse('bp', file, parsed);
   }
 
-  const response = await fetch('/api/gemini/extract-branch-proposal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
-    throw new Error(errBody.error || `Branch Proposal extraction failed (${response.status}).`);
+  // PDF: Read text layer directly at full speed; fall back to local non-AI Tesseract OCR only if image-only
+  onStage?.('Reading Branch Proposal PDF...');
+  const { lines, rawText } = await extractPdfLines(file);
+  if (rawText.trim().length >= 80) {
+    onStage?.('Extracting tables & fields...');
+    const parsed = parseBranchProposalFromPdf(lines, rawText);
+    return setCachedParse('bp', file, parsed);
   }
 
-  onStage?.('Finalizing extracted fields...');
-  const json = await response.json();
-  return setCachedParse('bp', file, json.data as BranchProposalData);
+  onStage?.('Rendering image-only PDF pages...');
+  const rendered = await renderPdfPagesToImages(file, 1400, 10);
+  if (rendered.length === 0) {
+    throw new Error('Could not read text or render pages from the Branch Proposal PDF.');
+  }
+  const ocrResult = await ocrImagesToPdfLines(
+    rendered.map((r) => ({
+      dataUrl: `data:${r.mimeType};base64,${r.data}`,
+      width: r.width,
+      height: r.height,
+    })),
+    onStage
+  );
+  onStage?.('Extracting tables & fields...');
+  const parsed = parseBranchProposalFromPdf(ocrResult.lines, ocrResult.rawText);
+  return setCachedParse('bp', file, parsed);
 }
 
 /**

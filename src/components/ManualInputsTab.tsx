@@ -268,7 +268,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                       {meta.uploaded || meta.parsing
                         ? meta.fileName
                         : key === 'branchProposal'
-                          ? 'Scanned PDF, Word (.docx), Excel (.xlsx/.xls), or Image'
+                          ? 'PDF, Word (.docx), Excel (.xlsx/.xls), or Image'
                           : key === 'costOfFund'
                             ? 'Excel (.xlsx / .xls), Word (.docx), or PDF'
                             : 'PDF, Word (.docx), or Excel (.xlsx / .xls)'}

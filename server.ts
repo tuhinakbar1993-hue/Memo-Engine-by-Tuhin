@@ -63,7 +63,7 @@ CRITICAL RULES:
           parts: [...imageParts, { text: promptText }],
         },
         config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,

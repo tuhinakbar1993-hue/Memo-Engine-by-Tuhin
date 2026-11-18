@@ -7,6 +7,7 @@ import { resolveICMemo } from './engines/icMemoEngine';
 import { MEMO_ENGINES } from './engines/memoRegistry';
 import { generateICMemoDocxBlob } from './exporters/icMemoDocx';
 import {
+  detectDocumentKeyFromFile,
   parseAccountStatementPdf,
   parseBranchProposalFile,
   parseCibReportPdf,
@@ -232,6 +233,24 @@ export default function App() {
     }
   };
 
+  const handleBatchUpload = async (files: FileList | File[]) => {
+    const fileList = Array.from(files);
+    const unmatched: string[] = [];
+
+    await Promise.all(
+      fileList.map(async (file) => {
+        const key = await detectDocumentKeyFromFile(file);
+        if (key) {
+          await handleFileUpload(key, file);
+        } else {
+          unmatched.push(file.name);
+        }
+      })
+    );
+
+    return unmatched;
+  };
+
   const handleManualChange = (field: keyof ManualInputsData, value: string) => {
     setManualInputs((prev) => ({ ...prev, [field]: value }));
   };
@@ -386,6 +405,7 @@ export default function App() {
             overrides={overrides}
             resolvedMemo={resolvedICMemo}
             onFileUpload={handleFileUpload}
+            onBatchUpload={handleBatchUpload}
             onManualChange={handleManualChange}
             onOverrideChange={handleOverrideChange}
             onResetOverrides={handleResetOverrides}

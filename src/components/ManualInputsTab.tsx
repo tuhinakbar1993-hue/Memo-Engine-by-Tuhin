@@ -27,6 +27,7 @@ interface ManualInputsTabProps {
   overrides: Record<string, string>;
   resolvedMemo: ResolvedICMemo;
   onFileUpload: (key: DocumentKey, file: File) => void;
+  onBatchUpload: (files: FileList | File[]) => Promise<string[]>;
   onManualChange: (field: keyof ManualInputsData, value: string) => void;
   onOverrideChange: (code: string, value: string) => void;
   onResetOverrides: () => void;
@@ -51,6 +52,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
   overrides,
   resolvedMemo,
   onFileUpload,
+  onBatchUpload,
   onManualChange,
   onOverrideChange,
   onResetOverrides,
@@ -60,6 +62,19 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
 }) => {
   const [showAllFields, setShowAllFields] = useState(true);
   const [searchFilter, setSearchFilter] = useState('');
+  const [isDraggingBatch, setIsDraggingBatch] = useState(false);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
+
+  const handleBatchFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setBatchNotice(null);
+    const unmatched = await onBatchUpload(files);
+    if (unmatched.length > 0) {
+      setBatchNotice(
+        `Could not auto-match: ${unmatched.join(', ')}. Use the individual row buttons below.`
+      );
+    }
+  };
 
   const uploadedCount = DOC_ORDER.filter((k) => docMetas[k].uploaded).length;
   const isCalc = (code: string) => code === '#32#' || code === '#42#' || code === '#44#';
@@ -128,6 +143,53 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
             <span className="font-mono-tabular text-xs font-semibold text-slate-700">
               {uploadedCount}/7
             </span>
+          </div>
+
+          {/* Quick Batch Drop / Multi-Select Upload */}
+          <div className="p-3 bg-slate-50 border-b border-slate-200">
+            <label
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDraggingBatch(true);
+              }}
+              onDragLeave={() => setIsDraggingBatch(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDraggingBatch(false);
+                void handleBatchFiles(e.dataTransfer.files);
+              }}
+              className={`flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-md border border-dashed transition-colors cursor-pointer ${
+                isDraggingBatch
+                  ? 'border-emerald-700 bg-emerald-50/60'
+                  : 'border-slate-300 bg-white hover:border-emerald-700'
+              }`}
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-800">
+                  Quick Batch Upload (Drop or Select All 7 Files)
+                </p>
+                <p className="text-[11px] text-slate-500 truncate">
+                  Auto-routes and parses all files concurrently
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded shrink-0 whitespace-nowrap">
+                <FileUp className="w-3.5 h-3.5" />
+                <span>Select Files</span>
+              </span>
+              <input
+                type="file"
+                multiple
+                accept=".pdf,.xlsx,.xls,.csv,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  void handleBatchFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            {batchNotice && (
+              <p className="mt-1.5 text-xs text-amber-800 font-medium">{batchNotice}</p>
+            )}
           </div>
 
           <div className="divide-y divide-slate-200">

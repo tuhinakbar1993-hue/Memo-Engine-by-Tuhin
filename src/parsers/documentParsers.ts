@@ -4,12 +4,28 @@ import type {
   BranchProposalData,
   CibReportData,
   CostOfFundData,
+  DocumentKey,
   OutstandingData,
   OverdueData,
   PartyPerformanceData,
 } from '../types/memo';
 import { cleanText, parseIndianNumber } from '../utils/numberFormat';
-import { extractPdfLines, PdfLine, PdfTextItem, renderPdfPagesToImages } from './pdfUtils';
+import { extractPdfLines, PdfTextItem, renderPdfPagesToImages } from './pdfUtils';
+
+const parseCache = new Map<string, unknown>();
+
+function getFileSignature(prefix: string, file: File): string {
+  return `${prefix}:${file.name}:${file.size}:${file.lastModified}`;
+}
+
+export function getCachedParse<T>(prefix: string, file: File): T | undefined {
+  return parseCache.get(getFileSignature(prefix, file)) as T | undefined;
+}
+
+export function setCachedParse<T>(prefix: string, file: File, value: T): T {
+  parseCache.set(getFileSignature(prefix, file), value);
+  return value;
+}
 
 function findNearestItemByX(items: PdfTextItem[], targetX: number, maxDist = 65): PdfTextItem | undefined {
   let best: PdfTextItem | undefined;
@@ -29,6 +45,9 @@ function findNearestItemByX(items: PdfTextItem[], targetX: number, maxDist = 65)
  * 1. Branch Proposal (Scanned PDF or Images -> Gemini multimodal API route)
  */
 export async function parseBranchProposalFile(file: File): Promise<BranchProposalData> {
+  const cached = getCachedParse<BranchProposalData>('bp', file);
+  if (cached) return cached;
+
   let pages: Array<{ mimeType: string; data: string }> = [];
 
   if (file.type.startsWith('image/')) {
@@ -40,7 +59,7 @@ export async function parseBranchProposalFile(file: File): Promise<BranchProposa
     });
     pages = [{ mimeType: file.type, data: dataUrl.split(',')[1] ?? '' }];
   } else {
-    pages = await renderPdfPagesToImages(file, 1.85, 8);
+    pages = await renderPdfPagesToImages(file, 1400, 8);
   }
 
   if (pages.length === 0) {
@@ -59,7 +78,7 @@ export async function parseBranchProposalFile(file: File): Promise<BranchProposa
   }
 
   const json = await response.json();
-  return json.data as BranchProposalData;
+  return setCachedParse('bp', file, json.data as BranchProposalData);
 }
 
 /**
@@ -471,3 +490,51 @@ export async function parseCostOfFundFile(file: File): Promise<{
     rawText: previewRows.join('\n'),
   };
 }
+
+/**
+ * Automatically identifies which of the 7 banking documents a file corresponds to
+ * for instant batch drag-and-drop / multi-file upload.
+ */
+export async function detectDocumentKeyFromFile(file: File): Promise<DocumentKey | null> {
+  const name = file.name.toLowerCase();
+
+  if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv') || /cost.*fund|cof/.test(name)) {
+    return 'costOfFund';
+  }
+  if (/branch.*proposal|proposal/.test(name) || file.type.startsWith('image/')) {
+    return 'branchProposal';
+  }
+  if (/outstanding/.test(name)) {
+    return 'outstanding';
+  }
+  if (/party.*performance|performance/.test(name)) {
+    return 'partyPerformance';
+  }
+  if (/overdue/.test(name)) {
+    return 'overdue';
+  }
+  if (/account.*statement|statement|a\/c/.test(name)) {
+    return 'accountStatement';
+  }
+  if (/cib/.test(name)) {
+    return 'cibReport';
+  }
+
+  // Fallback: quick text inspection of PDF
+  try {
+    const { rawText } = await extractPdfLines(file);
+    if (/customer\s+outstanding\s+report|princ\s+out/i.test(rawText)) return 'outstanding';
+    if (/perform[ea]nce\s+report|recovery\s+amt/i.test(rawText)) return 'partyPerformance';
+    if (/statement\s+of\s+overdue/i.test(rawText)) return 'overdue';
+    if (/a\/c\s+statement|mudaraba|balance\s+b\/f/i.test(rawText)) return 'accountStatement';
+    if (/credit\s+information\s+bureau|cib\s+subject\s+code/i.test(rawText)) return 'cibReport';
+    if (/cost\s+of\s+fund|realization\s+over\s+cost/i.test(rawText)) return 'costOfFund';
+    // Scanned PDF with negligible extractable text -> likely scanned Branch Proposal
+    if (rawText.trim().length < 150) return 'branchProposal';
+  } catch {
+    // Ignore inspection error
+  }
+
+  return null;
+}
+

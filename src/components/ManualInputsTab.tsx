@@ -212,7 +212,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
               <input
                 type="file"
                 multiple
-                accept=".pdf,.xlsx,.xls,.csv,image/*"
+                accept=".pdf,.docx,.xlsx,.xls,.csv,image/*"
                 className="hidden"
                 onChange={(e) => {
                   void handleBatchFiles(e.target.files);
@@ -268,10 +268,10 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                       {meta.uploaded || meta.parsing
                         ? meta.fileName
                         : key === 'branchProposal'
-                          ? 'Scanned PDF (extracted via Gemini multimodal)'
+                          ? 'Scanned PDF, Word (.docx), Excel (.xlsx/.xls), or Image'
                           : key === 'costOfFund'
-                            ? 'Excel (.xlsx / .xls) or PDF'
-                            : 'Text-based PDF'}
+                            ? 'Excel (.xlsx / .xls), Word (.docx), or PDF'
+                            : 'PDF, Word (.docx), or Excel (.xlsx / .xls)'}
                     </p>
 
                     {meta.error && (

@@ -29,33 +29,43 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '50mb' }));
 
-  // Multimodal extraction for scanned Branch Proposal PDF pages
+  // Multimodal + structured extraction for Branch Proposal (scanned PDF/images, Word .docx, or Excel .xlsx/.xls)
   app.post('/api/gemini/extract-branch-proposal', async (req, res) => {
     try {
-      const { pages } = req.body as { pages?: Array<{ mimeType: string; data: string }> };
-      if (!pages || !Array.isArray(pages) || pages.length === 0) {
-        res.status(400).json({ error: 'No rendered PDF pages provided for extraction.' });
+      const { pages, structuredText, fileName } = req.body as {
+        pages?: Array<{ mimeType: string; data: string }>;
+        structuredText?: string;
+        fileName?: string;
+      };
+
+      const hasPages = Array.isArray(pages) && pages.length > 0;
+      const hasText = typeof structuredText === 'string' && structuredText.trim().length > 0;
+
+      if (!hasPages && !hasText) {
+        res.status(400).json({ error: 'No Branch Proposal pages or structured document content provided.' });
         return;
       }
 
       const ai = getAiClient();
 
-      const imageParts = pages.map((page) => ({
-        inlineData: {
-          mimeType: page.mimeType || 'image/jpeg',
-          data: page.data,
-        },
-      }));
+      const imageParts = hasPages
+        ? pages!.map((page) => ({
+            inlineData: {
+              mimeType: page.mimeType || 'image/jpeg',
+              data: page.data,
+            },
+          }))
+        : [];
 
-      const promptText = `You are an expert Bangladeshi banking credit analyst reading a scanned, noisy "Exit with Waiver" Branch Proposal from Sammilito Islami Bank PLC (Union Bank PLC Unit).
-Carefully inspect all pages (including stamps, handwritten corrections, and tables) and extract the exact text and figures.
+      const promptText = `You are an expert Bangladeshi banking credit analyst reading an "Exit with Waiver" Branch Proposal from Sammilito Islami Bank PLC (Union Bank PLC Unit)${fileName ? ` (File: ${fileName})` : ''}.
+Carefully inspect all ${hasPages ? 'pages (including stamps, handwritten corrections, and tables)' : 'paragraphs, tables, and worksheets'} and extract the exact text and figures.
 
 CRITICAL RULES:
 1. All figures in the Branch Proposal are ALREADY in Million BDT. Copy figures as written (do NOT divide or convert units).
-2. Read handwritten reference numbers and dates carefully (for example: Ref no like UB/PATIYA/INV/2026/487, Proposal Date like 18/11/2026).
+2. Read reference numbers and dates carefully (for example: Ref no like UB/PATIYA/INV/2026/487, Proposal Date like 18/11/2026).
 3. For tables in sections 3, 4, 5, 6, 7, 9, 10, 11, extract every non-empty row accurately. If a section is marked "N/A" or "Nil", capture that status and still extract any filled table rows.
 4. For Security Value in Remarks of the main table (item 3), extract MV (e.g. "N/A" or amount) and FSV (if blank, return "").
-5. Return strictly valid JSON matching the schema.`;
+5. Return strictly valid JSON matching the schema.${hasText ? `\n\nDOCUMENT CONTENT:\n${structuredText}` : ''}`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',

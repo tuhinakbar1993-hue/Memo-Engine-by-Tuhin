@@ -29,7 +29,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   branchProposal: {
     key: 'branchProposal',
     label: 'Branch Proposal',
-    acceptedFormats: '.pdf,image/*',
+    acceptedFormats: '.pdf,.docx,.xlsx,.xls,image/*',
     uploaded: false,
     fileName: '',
     parsing: false,
@@ -39,7 +39,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   outstanding: {
     key: 'outstanding',
     label: 'Outstanding',
-    acceptedFormats: '.pdf',
+    acceptedFormats: '.pdf,.docx,.xlsx,.xls',
     uploaded: false,
     fileName: '',
     parsing: false,
@@ -49,7 +49,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   partyPerformance: {
     key: 'partyPerformance',
     label: 'Party Performance',
-    acceptedFormats: '.pdf',
+    acceptedFormats: '.pdf,.docx,.xlsx,.xls',
     uploaded: false,
     fileName: '',
     parsing: false,
@@ -59,7 +59,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   overdue: {
     key: 'overdue',
     label: 'Overdue',
-    acceptedFormats: '.pdf',
+    acceptedFormats: '.pdf,.docx,.xlsx,.xls',
     uploaded: false,
     fileName: '',
     parsing: false,
@@ -69,7 +69,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   accountStatement: {
     key: 'accountStatement',
     label: 'Account Statement',
-    acceptedFormats: '.pdf',
+    acceptedFormats: '.pdf,.docx,.xlsx,.xls',
     uploaded: false,
     fileName: '',
     parsing: false,
@@ -79,7 +79,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   cibReport: {
     key: 'cibReport',
     label: 'CIB Report',
-    acceptedFormats: '.pdf',
+    acceptedFormats: '.pdf,.docx,.xlsx,.xls',
     uploaded: false,
     fileName: '',
     parsing: false,
@@ -89,7 +89,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   costOfFund: {
     key: 'costOfFund',
     label: 'Cost of Fund',
-    acceptedFormats: '.xlsx,.xls,.csv,.pdf',
+    acceptedFormats: '.xlsx,.xls,.csv,.docx,.pdf',
     uploaded: false,
     fileName: '',
     parsing: false,

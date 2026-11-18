@@ -44,6 +44,18 @@ export interface PdfLine {
   text: string;
 }
 
+const pdfLinesCache = new Map<
+  string,
+  { lines: PdfLine[]; rawText: string; pageCount: number }
+>();
+
+function getFileCacheKey(file: File | ArrayBuffer): string | null {
+  if (file instanceof File) {
+    return `${file.name}:${file.size}:${file.lastModified}`;
+  }
+  return null;
+}
+
 /**
  * Extracts text items across all pages in parallel and reconstructs visual lines
  * sorted top-to-bottom, left-to-right.
@@ -53,6 +65,12 @@ export async function extractPdfLines(file: File | ArrayBuffer): Promise<{
   rawText: string;
   pageCount: number;
 }> {
+  const cacheKey = getFileCacheKey(file);
+  if (cacheKey) {
+    const cached = pdfLinesCache.get(cacheKey);
+    if (cached) return cached;
+  }
+
   const buffer = file instanceof File ? await file.arrayBuffer() : file;
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(buffer),
@@ -117,7 +135,11 @@ export async function extractPdfLines(file: File | ArrayBuffer): Promise<{
   const allLines = perPageLines.flat();
   const rawText = allLines.map((l) => l.text).join('\n');
 
-  return { lines: allLines, rawText, pageCount: pdf.numPages };
+  const result = { lines: allLines, rawText, pageCount: pdf.numPages };
+  if (cacheKey) {
+    pdfLinesCache.set(cacheKey, result);
+  }
+  return result;
 }
 
 /**

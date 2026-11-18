@@ -33,6 +33,7 @@ interface ManualInputsTabProps {
   onResetOverrides: () => void;
   onLoadSampleDocuments: () => void;
   loadingSamples: boolean;
+  batchProgress: { active: boolean; total: number; completed: number };
   onGoToICMemo: () => void;
 }
 
@@ -58,6 +59,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
   onResetOverrides,
   onLoadSampleDocuments,
   loadingSamples,
+  batchProgress,
   onGoToICMemo,
 }) => {
   const [showAllFields, setShowAllFields] = useState(true);
@@ -77,6 +79,11 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
   };
 
   const uploadedCount = DOC_ORDER.filter((k) => docMetas[k].uploaded).length;
+  const anyParsing = DOC_ORDER.some((k) => docMetas[k].parsing);
+  const progressPct =
+    batchProgress.total > 0
+      ? Math.round((batchProgress.completed / batchProgress.total) * 100)
+      : 0;
   const isCalc = (code: string) => code === '#32#' || code === '#42#' || code === '#44#';
 
   const filteredSpecs = IC_PLACEHOLDER_SPECS.filter((spec) => {
@@ -145,6 +152,32 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
             </span>
           </div>
 
+          {(batchProgress.active || anyParsing) && (
+            <div className="px-5 py-2.5 bg-emerald-50/70 border-b border-emerald-200 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-medium text-emerald-900">
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-800" />
+                  <span>
+                    {batchProgress.active
+                      ? `Processing documents (${batchProgress.completed} of ${batchProgress.total} completed)...`
+                      : 'Processing uploaded document...'}
+                  </span>
+                </span>
+                {batchProgress.active && (
+                  <span className="font-mono-tabular font-semibold">{progressPct}%</span>
+                )}
+              </div>
+              {batchProgress.active && (
+                <div className="w-full h-1.5 bg-emerald-200/70 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-700 transition-all duration-200"
+                    style={{ width: `${Math.max(8, progressPct)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Quick Batch Drop / Multi-Select Upload */}
           <div className="p-3 bg-slate-50 border-b border-slate-200">
             <label
@@ -209,8 +242,8 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                       </span>
                       {meta.parsing ? (
                         <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-800">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Reading</span>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                          <span className="truncate">{meta.stage || 'Reading...'}</span>
                         </span>
                       ) : meta.uploaded ? (
                         <span
@@ -232,7 +265,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                     </div>
 
                     <p className="text-xs text-slate-500 mt-1 truncate">
-                      {meta.uploaded
+                      {meta.uploaded || meta.parsing
                         ? meta.fileName
                         : key === 'branchProposal'
                           ? 'Scanned PDF (extracted via Gemini multimodal)'

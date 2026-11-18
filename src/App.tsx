@@ -33,6 +33,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
     uploaded: false,
     fileName: '',
     parsing: false,
+    stage: null,
     error: null,
   },
   outstanding: {
@@ -42,6 +43,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
     uploaded: false,
     fileName: '',
     parsing: false,
+    stage: null,
     error: null,
   },
   partyPerformance: {
@@ -51,6 +53,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
     uploaded: false,
     fileName: '',
     parsing: false,
+    stage: null,
     error: null,
   },
   overdue: {
@@ -60,6 +63,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
     uploaded: false,
     fileName: '',
     parsing: false,
+    stage: null,
     error: null,
   },
   accountStatement: {
@@ -69,6 +73,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
     uploaded: false,
     fileName: '',
     parsing: false,
+    stage: null,
     error: null,
   },
   cibReport: {
@@ -78,6 +83,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
     uploaded: false,
     fileName: '',
     parsing: false,
+    stage: null,
     error: null,
   },
   costOfFund: {
@@ -87,6 +93,7 @@ const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
     uploaded: false,
     fileName: '',
     parsing: false,
+    stage: null,
     error: null,
   },
 };
@@ -136,6 +143,11 @@ export default function App() {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
 
   const [loadingSamples, setLoadingSamples] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    active: boolean;
+    total: number;
+    completed: number;
+  }>({ active: false, total: 0, completed: 0 });
   const [generatingSection, setGeneratingSection] = useState<
     'justification' | 'branchVisit' | 'samdObservation' | null
   >(null);
@@ -147,38 +159,51 @@ export default function App() {
     [extractedDocs, manualInputs, aiSections, overrides]
   );
 
+  const updateDocStage = (key: DocumentKey, stage: string) => {
+    setDocMetas((prev) => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        stage,
+      },
+    }));
+  };
+
   const handleFileUpload = async (key: DocumentKey, file: File) => {
     setDocMetas((prev) => ({
       ...prev,
       [key]: {
         ...prev[key],
         parsing: true,
+        stage: 'Starting...',
         error: null,
         fileName: file.name,
       },
     }));
 
+    const onStage = (stage: string) => updateDocStage(key, stage);
+
     try {
       if (key === 'branchProposal') {
-        const bpData = await parseBranchProposalFile(file);
+        const bpData = await parseBranchProposalFile(file, onStage);
         setExtractedDocs((prev) => ({ ...prev, branchProposal: bpData }));
       } else if (key === 'outstanding') {
-        const res = await parseOutstandingPdf(file);
+        const res = await parseOutstandingPdf(file, onStage);
         setExtractedDocs((prev) => ({ ...prev, outstanding: res.data }));
       } else if (key === 'partyPerformance') {
-        const res = await parsePartyPerformancePdf(file);
+        const res = await parsePartyPerformancePdf(file, onStage);
         setExtractedDocs((prev) => ({ ...prev, partyPerformance: res.data }));
       } else if (key === 'overdue') {
-        const res = await parseOverduePdf(file);
+        const res = await parseOverduePdf(file, onStage);
         setExtractedDocs((prev) => ({ ...prev, overdue: res.data }));
       } else if (key === 'accountStatement') {
-        const res = await parseAccountStatementPdf(file);
+        const res = await parseAccountStatementPdf(file, onStage);
         setExtractedDocs((prev) => ({ ...prev, accountStatement: res.data }));
       } else if (key === 'cibReport') {
-        const res = await parseCibReportPdf(file);
+        const res = await parseCibReportPdf(file, onStage);
         setExtractedDocs((prev) => ({ ...prev, cibReport: res.data }));
       } else if (key === 'costOfFund') {
-        const res = await parseCostOfFundFile(file);
+        const res = await parseCostOfFundFile(file, onStage);
         setExtractedDocs((prev) => ({ ...prev, costOfFund: res.data }));
       }
 
@@ -188,6 +213,7 @@ export default function App() {
           ...prev[key],
           uploaded: true,
           parsing: false,
+          stage: null,
           error: null,
           fileName: file.name,
         },
@@ -200,6 +226,7 @@ export default function App() {
           ...prev[key],
           uploaded: false,
           parsing: false,
+          stage: null,
           error: msg,
         },
       }));
@@ -218,18 +245,26 @@ export default function App() {
       { key: 'branchProposal', url: '/assets/aistudio/Branch_Proposal_a3692300.pdf', name: 'Branch_Proposal.pdf' },
     ];
 
+    setBatchProgress({ active: true, total: sampleFiles.length, completed: 0 });
+
     try {
       await Promise.all(
         sampleFiles.map(async ({ key, url, name }) => {
-          const response = await fetch(url);
-          if (!response.ok) throw new Error(`Sample file missing: ${name}`);
-          const blob = await response.blob();
-          const file = new File([blob], name, { type: blob.type || 'application/pdf' });
-          await handleFileUpload(key, file);
+          updateDocStage(key, 'Fetching sample...');
+          try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Sample file missing: ${name}`);
+            const blob = await response.blob();
+            const file = new File([blob], name, { type: blob.type || 'application/pdf' });
+            await handleFileUpload(key, file);
+          } finally {
+            setBatchProgress((prev) => ({ ...prev, completed: prev.completed + 1 }));
+          }
         })
       );
     } finally {
       setLoadingSamples(false);
+      setBatchProgress({ active: false, total: 0, completed: 0 });
     }
   };
 
@@ -237,16 +272,26 @@ export default function App() {
     const fileList = Array.from(files);
     const unmatched: string[] = [];
 
-    await Promise.all(
-      fileList.map(async (file) => {
-        const key = await detectDocumentKeyFromFile(file);
-        if (key) {
-          await handleFileUpload(key, file);
-        } else {
-          unmatched.push(file.name);
-        }
-      })
-    );
+    setBatchProgress({ active: true, total: fileList.length, completed: 0 });
+
+    try {
+      await Promise.all(
+        fileList.map(async (file) => {
+          try {
+            const key = await detectDocumentKeyFromFile(file);
+            if (key) {
+              await handleFileUpload(key, file);
+            } else {
+              unmatched.push(file.name);
+            }
+          } finally {
+            setBatchProgress((prev) => ({ ...prev, completed: prev.completed + 1 }));
+          }
+        })
+      );
+    } finally {
+      setBatchProgress({ active: false, total: 0, completed: 0 });
+    }
 
     return unmatched;
   };
@@ -411,6 +456,7 @@ export default function App() {
             onResetOverrides={handleResetOverrides}
             onLoadSampleDocuments={handleLoadSampleDocuments}
             loadingSamples={loadingSamples}
+            batchProgress={batchProgress}
             onGoToICMemo={() => setActiveTab('ic')}
           />
         )}

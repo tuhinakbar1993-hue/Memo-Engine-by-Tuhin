@@ -16,6 +16,7 @@ export interface DocumentUploadMeta {
   uploaded: boolean;
   fileName: string;
   parsing: boolean;
+  stage?: string | null;
   error: string | null;
   rawTextPreview?: string;
 }

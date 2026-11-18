@@ -41,16 +41,26 @@ function findNearestItemByX(items: PdfTextItem[], targetX: number, maxDist = 65)
   return best;
 }
 
+export type StageCallback = (stage: string) => void;
+
 /**
  * 1. Branch Proposal (Scanned PDF or Images -> Gemini multimodal API route)
  */
-export async function parseBranchProposalFile(file: File): Promise<BranchProposalData> {
+export async function parseBranchProposalFile(
+  file: File,
+  onStage?: StageCallback
+): Promise<BranchProposalData> {
+  onStage?.('Checking cache...');
   const cached = getCachedParse<BranchProposalData>('bp', file);
-  if (cached) return cached;
+  if (cached) {
+    onStage?.('Loaded from cache');
+    return cached;
+  }
 
   let pages: Array<{ mimeType: string; data: string }> = [];
 
   if (file.type.startsWith('image/')) {
+    onStage?.('Reading image...');
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result ?? ''));
@@ -59,6 +69,7 @@ export async function parseBranchProposalFile(file: File): Promise<BranchProposa
     });
     pages = [{ mimeType: file.type, data: dataUrl.split(',')[1] ?? '' }];
   } else {
+    onStage?.('Rendering scanned pages...');
     pages = await renderPdfPagesToImages(file, 1400, 8);
   }
 
@@ -66,6 +77,7 @@ export async function parseBranchProposalFile(file: File): Promise<BranchProposa
     throw new Error('Could not render any pages from the Branch Proposal file.');
   }
 
+  onStage?.(`Analyzing ${pages.length} page${pages.length > 1 ? 's' : ''} with Gemini...`);
   const response = await fetch('/api/gemini/extract-branch-proposal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -77,6 +89,7 @@ export async function parseBranchProposalFile(file: File): Promise<BranchProposa
     throw new Error(errBody.error || `Branch Proposal extraction failed (${response.status}).`);
   }
 
+  onStage?.('Finalizing extracted fields...');
   const json = await response.json();
   return setCachedParse('bp', file, json.data as BranchProposalData);
 }
@@ -84,11 +97,22 @@ export async function parseBranchProposalFile(file: File): Promise<BranchProposa
 /**
  * 2. Outstanding PDF (Grand Total row: Princ Out, Charge, Profit Out, Compensation, Unapplied Pro, NET Out)
  */
-export async function parseOutstandingPdf(file: File): Promise<{
+export async function parseOutstandingPdf(
+  file: File,
+  onStage?: StageCallback
+): Promise<{
   data: OutstandingData;
   rawText: string;
 }> {
+  const cached = getCachedParse<{ data: OutstandingData; rawText: string }>('outstanding', file);
+  if (cached) {
+    onStage?.('Loaded from cache');
+    return cached;
+  }
+
+  onStage?.('Reading PDF text...');
   const { lines, rawText } = await extractPdfLines(file);
+  onStage?.('Extracting balances...');
 
   // Locate header line containing Princ Out and NET Out
   const headerLine = lines.find(
@@ -165,7 +189,7 @@ export async function parseOutstandingPdf(file: File): Promise<{
     }
   }
 
-  return {
+  return setCachedParse('outstanding', file, {
     data: {
       princOutBDT,
       chargeBDT,
@@ -175,17 +199,28 @@ export async function parseOutstandingPdf(file: File): Promise<{
       netOutBDT,
     },
     rawText,
-  };
+  });
 }
 
 /**
  * 3. Party Performance PDF (Product Name -> #5#/#55#, Customer Total Recovery Amt -> #60#, Print Date -> #68#)
  */
-export async function parsePartyPerformancePdf(file: File): Promise<{
+export async function parsePartyPerformancePdf(
+  file: File,
+  onStage?: StageCallback
+): Promise<{
   data: PartyPerformanceData;
   rawText: string;
 }> {
+  const cached = getCachedParse<{ data: PartyPerformanceData; rawText: string }>('partyPerf', file);
+  if (cached) {
+    onStage?.('Loaded from cache');
+    return cached;
+  }
+
+  onStage?.('Reading PDF text...');
   const { lines, rawText } = await extractPdfLines(file);
+  onStage?.('Extracting performance figures...');
 
   let productName = '';
   let printDate = '';
@@ -256,24 +291,35 @@ export async function parsePartyPerformancePdf(file: File): Promise<{
     }
   }
 
-  return {
+  return setCachedParse('partyPerf', file, {
     data: {
       productName,
       recoveryAmtBDT,
       printDate,
     },
     rawText,
-  };
+  });
 }
 
 /**
  * 4. Overdue PDF (Grand Total of Overdue Amount -> #59#)
  */
-export async function parseOverduePdf(file: File): Promise<{
+export async function parseOverduePdf(
+  file: File,
+  onStage?: StageCallback
+): Promise<{
   data: OverdueData;
   rawText: string;
 }> {
+  const cached = getCachedParse<{ data: OverdueData; rawText: string }>('overdue', file);
+  if (cached) {
+    onStage?.('Loaded from cache');
+    return cached;
+  }
+
+  onStage?.('Reading PDF text...');
   const { lines, rawText } = await extractPdfLines(file);
+  onStage?.('Extracting overdue total...');
 
   let overdueAmountBDT: number | null = null;
   const grandTotalLine = lines.find((l) => /grand\s*total/i.test(l.text));
@@ -287,20 +333,31 @@ export async function parseOverduePdf(file: File): Promise<{
     }
   }
 
-  return {
+  return setCachedParse('overdue', file, {
     data: { overdueAmountBDT },
     rawText,
-  };
+  });
 }
 
 /**
  * 5. Account Statement PDF (#2# Account number, #36# A/C No., #3# Branch name 2nd line, #69# Customer ID, #35# Last row Balance)
  */
-export async function parseAccountStatementPdf(file: File): Promise<{
+export async function parseAccountStatementPdf(
+  file: File,
+  onStage?: StageCallback
+): Promise<{
   data: AccountStatementData;
   rawText: string;
 }> {
+  const cached = getCachedParse<{ data: AccountStatementData; rawText: string }>('acctStmt', file);
+  if (cached) {
+    onStage?.('Loaded from cache');
+    return cached;
+  }
+
+  onStage?.('Reading PDF text...');
   const { lines, rawText } = await extractPdfLines(file);
+  onStage?.('Extracting account & balance...');
 
   // Branch name: 2nd line of the document (excluding standalone Print Date tokens on the right margin)
   let branchName = '';
@@ -368,7 +425,7 @@ export async function parseAccountStatementPdf(file: File): Promise<{
     }
   }
 
-  return {
+  return setCachedParse('acctStmt', file, {
     data: {
       accountNumber: acNo,
       acNo,
@@ -377,17 +434,29 @@ export async function parseAccountStatementPdf(file: File): Promise<{
       lastBalanceBDT,
     },
     rawText,
-  };
+  });
 }
 
 /**
  * 6. CIB Report PDF (#62# CIB date from Date of Inquiry)
  */
-export async function parseCibReportPdf(file: File): Promise<{
+export async function parseCibReportPdf(
+  file: File,
+  onStage?: StageCallback
+): Promise<{
   data: CibReportData;
   rawText: string;
 }> {
+  const cached = getCachedParse<{ data: CibReportData; rawText: string }>('cib', file);
+  if (cached) {
+    onStage?.('Loaded from cache');
+    return cached;
+  }
+
+  onStage?.('Reading PDF text...');
   const { lines, rawText } = await extractPdfLines(file);
+  onStage?.('Extracting inquiry date...');
+
   let cibDate = '';
 
   const inquiryHeaderIdx = lines.findIndex((l) => /Date\s*of\s*Inquiry/i.test(l.text));
@@ -414,24 +483,35 @@ export async function parseCibReportPdf(file: File): Promise<{
     if (m) cibDate = m[1];
   }
 
-  return {
+  return setCachedParse('cib', file, {
     data: { cibDate },
     rawText,
-  };
+  });
 }
 
 /**
  * 7. Cost of Fund (.xlsx / .xls via SheetJS, plus .pdf fallback)
  * Extracts "Surplus/Deficit of realization over cost of fund" -> #31#
  */
-export async function parseCostOfFundFile(file: File): Promise<{
+export async function parseCostOfFundFile(
+  file: File,
+  onStage?: StageCallback
+): Promise<{
   data: CostOfFundData;
   rawText: string;
 }> {
+  const cached = getCachedParse<{ data: CostOfFundData; rawText: string }>('cof', file);
+  if (cached) {
+    onStage?.('Loaded from cache');
+    return cached;
+  }
+
   const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
 
   if (isPdf) {
+    onStage?.('Reading PDF text...');
     const { lines, rawText } = await extractPdfLines(file);
+    onStage?.('Extracting cost of fund...');
     let surplusDeficitBDT: number | null = null;
     for (const line of lines) {
       if (/surpluse?\s*\/?\s*deficit\s+of\s+realization\s+over\s+cost\s+of\s+fund/i.test(line.text)) {
@@ -444,12 +524,14 @@ export async function parseCostOfFundFile(file: File): Promise<{
         }
       }
     }
-    return { data: { surplusDeficitBDT }, rawText };
+    return setCachedParse('cof', file, { data: { surplusDeficitBDT }, rawText });
   }
 
   // Excel (.xlsx, .xls, .csv) via SheetJS
+  onStage?.('Reading Excel workbook...');
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
+  onStage?.('Scanning sheets...');
 
   let surplusDeficitBDT: number | null = null;
   const previewRows: string[] = [];
@@ -485,10 +567,10 @@ export async function parseCostOfFundFile(file: File): Promise<{
     if (surplusDeficitBDT !== null) break;
   }
 
-  return {
+  return setCachedParse('cof', file, {
     data: { surplusDeficitBDT },
     rawText: previewRows.join('\n'),
-  };
+  });
 }
 
 /**

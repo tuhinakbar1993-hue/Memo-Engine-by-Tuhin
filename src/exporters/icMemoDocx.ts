@@ -22,8 +22,19 @@ import type { ResolvedICMemo } from '../types/memo';
 
 const FONT = 'Times New Roman';
 const SZ_BODY = 20; // 10pt
+const SZ_PARTICULARS = 19; // 9.5pt
+const SZ_META = 21; // 10.5pt
 const SZ_SMALL = 18; // 9pt
-const SZ_TITLE = 24; // 12pt
+const SZ_TITLE_BANK = 28; // 14pt
+const SZ_TITLE_SUB = 26; // 13pt
+const SZ_TITLE_UNIT = 22; // 11pt
+const SZ_TITLE_WAIVER = 24; // 12pt
+
+// A4 dimensions in twips (595.32pt x 841.92pt)
+const A4_WIDTH_TWIPS = 11906;
+const A4_HEIGHT_TWIPS = 16838;
+const MARGIN_LR_TWIPS = 1440; // 1 inch (72pt) matching reference IC_Memo.pdf
+const BODY_WIDTH_TWIPS = A4_WIDTH_TWIPS - MARGIN_LR_TWIPS * 2; // 9026 twips
 
 const THIN_BORDER = {
   style: BorderStyle.SINGLE,
@@ -71,7 +82,7 @@ function txt(
     underline?: boolean;
     size?: number;
     italics?: boolean;
-    highlight?: 'yellow';
+    superScript?: boolean;
   } = {}
 ): TextRun {
   return new TextRun({
@@ -80,7 +91,7 @@ function txt(
     size: opts.size ?? SZ_BODY,
     bold: opts.bold,
     italics: opts.italics,
-    highlight: opts.highlight,
+    superScript: opts.superScript,
     underline: opts.underline ? { type: UnderlineType.SINGLE } : undefined,
   });
 }
@@ -92,12 +103,19 @@ function p(
     before?: number;
     after?: number;
     indentLeft?: number;
+    pageBreakBefore?: boolean;
+    line?: number;
   } = {}
 ): Paragraph {
   return new Paragraph({
     alignment: opts.align ?? AlignmentType.LEFT,
-    spacing: { before: opts.before ?? 30, after: opts.after ?? 30, line: 240 },
+    spacing: {
+      before: opts.before ?? 24,
+      after: opts.after ?? 24,
+      line: opts.line ?? 240,
+    },
     indent: opts.indentLeft ? { left: opts.indentLeft } : undefined,
+    pageBreakBefore: opts.pageBreakBefore,
     children,
   });
 }
@@ -106,21 +124,35 @@ function cell(
   paragraphs: Array<Paragraph | Table>,
   opts: {
     widthPct?: number;
+    widthTwips?: number;
     rowSpan?: number;
     columnSpan?: number;
     borders?: ITableCellBorders;
     vAlign?: TableVerticalAlign;
     shading?: string;
+    marginTB?: number;
+    marginLR?: number;
   } = {}
 ): TableCell {
+  const width = opts.widthTwips
+    ? { size: opts.widthTwips, type: WidthType.DXA }
+    : opts.widthPct
+      ? { size: opts.widthPct, type: WidthType.PERCENTAGE }
+      : undefined;
+
   return new TableCell({
-    width: opts.widthPct ? { size: opts.widthPct, type: WidthType.PERCENTAGE } : undefined,
+    width,
     rowSpan: opts.rowSpan,
     columnSpan: opts.columnSpan,
     borders: opts.borders ?? ALL_DOTTED_BORDERS,
     verticalAlign: opts.vAlign ?? VerticalAlign.TOP,
     shading: opts.shading ? { fill: opts.shading } : undefined,
-    margins: { top: 45, bottom: 45, left: 75, right: 75 },
+    margins: {
+      top: opts.marginTB ?? 35,
+      bottom: opts.marginTB ?? 35,
+      left: opts.marginLR ?? 70,
+      right: opts.marginLR ?? 70,
+    },
     children: paragraphs,
   });
 }
@@ -132,27 +164,41 @@ function simpleCell(
     align?: (typeof AlignmentType)[keyof typeof AlignmentType];
     size?: number;
     widthPct?: number;
+    widthTwips?: number;
     rowSpan?: number;
     columnSpan?: number;
     borders?: ITableCellBorders;
+    vAlign?: TableVerticalAlign;
     shading?: string;
+    marginTB?: number;
   } = {}
 ): TableCell {
   const lines = (text || '').split('\n');
   const paras = lines.map((line) =>
-    p([txt(line, { bold: opts.bold, size: opts.size ?? SZ_SMALL })], {
+    p([txt(line, { bold: opts.bold, size: opts.size ?? SZ_BODY })], {
       align: opts.align ?? AlignmentType.LEFT,
-      before: 15,
-      after: 15,
+      before: 10,
+      after: 10,
+      line: 225,
     })
   );
   return cell(paras, {
     widthPct: opts.widthPct,
+    widthTwips: opts.widthTwips,
     rowSpan: opts.rowSpan,
     columnSpan: opts.columnSpan,
     borders: opts.borders,
+    vAlign: opts.vAlign,
     shading: opts.shading,
+    marginTB: opts.marginTB,
   });
+}
+
+function pctWidths(pcts: number[], totalTwips = BODY_WIDTH_TWIPS): number[] {
+  const widths = pcts.map((pct) => Math.floor((pct / 100) * totalTwips));
+  const diff = totalTwips - widths.reduce((a, b) => a + b, 0);
+  if (widths.length > 0) widths[widths.length - 1] += diff;
+  return widths;
 }
 
 async function fetchImageBytes(url: string): Promise<Uint8Array | null> {
@@ -182,18 +228,20 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
 
   const v = (code: string) => valOrToken(ph, code);
 
-  // Header rendered on every page
+  // Header rendered identically across all A4 pages (width extends slightly into left/right margins just like IC Memo.pdf)
+  const HEADER_WIDTH_TWIPS = 10466;
+  const headerCols = pctWidths([16, 65, 19], HEADER_WIDTH_TWIPS);
   const headerChildren: Array<Paragraph | Table> = [];
   if (bismillahBytes) {
     headerChildren.push(
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        spacing: { before: 0, after: 40 },
+        spacing: { before: 0, after: 20 },
         children: [
           new ImageRun({
             data: bismillahBytes,
             type: 'jpg',
-            transformation: { width: 190, height: 22 },
+            transformation: { width: 175, height: 20 },
           }),
         ],
       })
@@ -202,71 +250,97 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
 
   headerChildren.push(
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: HEADER_WIDTH_TWIPS, type: WidthType.DXA },
+      alignment: AlignmentType.CENTER,
+      columnWidths: headerCols,
       rows: [
         new TableRow({
+          cantSplit: true,
           children: [
             cell(
               logoBytes
                 ? [
                     new Paragraph({
                       alignment: AlignmentType.LEFT,
+                      spacing: { before: 0, after: 0 },
                       children: [
                         new ImageRun({
                           data: logoBytes,
                           type: 'jpg',
-                          transformation: { width: 58, height: 65 },
+                          transformation: { width: 54, height: 61 },
                         }),
                       ],
                     }),
                   ]
                 : [p([txt('SIB PLC', { bold: true })])],
-              { widthPct: 18, borders: ALL_NO_BORDERS }
+              { widthTwips: headerCols[0], borders: ALL_NO_BORDERS, marginTB: 0 }
             ),
             cell(
               [
-                p([txt('SAMMILITO ISLAMI BANK PLC.', { bold: true, underline: true, size: SZ_TITLE })], {
+                p([txt('SAMMILITO ISLAMI BANK PLC.', { underline: true, size: SZ_TITLE_BANK })], {
                   align: AlignmentType.CENTER,
                   before: 0,
-                  after: 20,
+                  after: 10,
+                  line: 240,
                 }),
-                p([txt('(State-owned Shariah-based Bank)', { bold: true, underline: true, size: SZ_BODY })], {
+                p(
+                  [
+                    txt('(', { underline: true, size: SZ_SMALL }),
+                    txt('State-owned Shariah-based Bank', { underline: true, size: SZ_TITLE_SUB }),
+                    txt(')', { underline: true, size: SZ_SMALL }),
+                  ],
+                  {
+                    align: AlignmentType.CENTER,
+                    before: 0,
+                    after: 10,
+                    line: 240,
+                  }
+                ),
+                p([txt('UNION BANK UNIT', { underline: true, size: SZ_TITLE_UNIT })], {
                   align: AlignmentType.CENTER,
                   before: 0,
-                  after: 20,
+                  after: 10,
+                  line: 240,
                 }),
-                p([txt('UNION BANK UNIT', { bold: true, underline: true, size: SZ_BODY })], {
-                  align: AlignmentType.CENTER,
-                  before: 0,
-                  after: 20,
-                }),
-                p([txt('Special Asset Management Division Head Office, Dhaka', { underline: true, size: SZ_SMALL })], {
-                  align: AlignmentType.CENTER,
-                  before: 0,
-                  after: 20,
-                }),
+                p(
+                  [
+                    txt('Special Asset Management Division Head Office, Dhaka', {
+                      underline: true,
+                      size: SZ_SMALL,
+                    }),
+                  ],
+                  {
+                    align: AlignmentType.CENTER,
+                    before: 0,
+                    after: 10,
+                    line: 220,
+                  }
+                ),
               ],
-              { widthPct: 60, borders: ALL_NO_BORDERS }
+              { widthTwips: headerCols[1], borders: ALL_NO_BORDERS, marginTB: 0 }
             ),
             cell(
               [
                 new Table({
-                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  width: { size: headerCols[2] - 120, type: WidthType.DXA },
+                  alignment: AlignmentType.RIGHT,
                   rows: [
                     new TableRow({
+                      cantSplit: true,
                       children: [
                         simpleCell('Exit with Waiver', {
                           bold: true,
-                          size: SZ_BODY,
+                          size: SZ_TITLE_WAIVER,
                           align: AlignmentType.CENTER,
                           borders: ALL_THIN_BORDERS,
+                          marginTB: 60,
                         }),
                       ],
                     }),
                   ],
                 }),
               ],
-              { widthPct: 22, borders: ALL_NO_BORDERS }
+              { widthTwips: headerCols[2], borders: ALL_NO_BORDERS, marginTB: 0 }
             ),
           ],
         }),
@@ -280,11 +354,12 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     children: [
       new Paragraph({
         alignment: AlignmentType.RIGHT,
+        spacing: { before: 0, after: 0 },
         children: [
-          txt('Page ', { size: SZ_SMALL }),
-          new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SZ_SMALL }),
-          txt(' of ', { size: SZ_SMALL }),
-          new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: SZ_SMALL }),
+          txt('Page ', { size: SZ_BODY }),
+          new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SZ_BODY }),
+          txt(' of ', { size: SZ_BODY }),
+          new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: SZ_BODY }),
         ],
       }),
     ],
@@ -293,75 +368,112 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
   // Document body children
   const body: Array<Paragraph | Table> = [];
 
-  // Top Metadata Table (Dated, Memo no, To, From)
+  // Top Metadata Table (Dated, Memo no, To, From) — ~44% of body width (4000 twips)
+  const metaWidth = 4000;
+  const metaCols = pctWidths([28, 7, 65], metaWidth);
   body.push(
     new Table({
-      width: { size: 52, type: WidthType.PERCENTAGE },
+      width: { size: metaWidth, type: WidthType.DXA },
+      columnWidths: metaCols,
       rows: [
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Dated', { bold: true, widthPct: 30, borders: ALL_THIN_BORDERS }),
-            simpleCell(':', { bold: true, align: AlignmentType.CENTER, widthPct: 8, borders: ALL_THIN_BORDERS }),
-            simpleCell(v('#1#'), { bold: true, widthPct: 62, borders: ALL_THIN_BORDERS }),
+            simpleCell('Dated', {
+              bold: true,
+              size: SZ_META,
+              widthTwips: metaCols[0],
+              borders: ALL_THIN_BORDERS,
+              marginTB: 20,
+            }),
+            simpleCell(':', {
+              bold: true,
+              size: SZ_META,
+              align: AlignmentType.CENTER,
+              widthTwips: metaCols[1],
+              borders: ALL_THIN_BORDERS,
+              marginTB: 20,
+            }),
+            simpleCell(v('#1#'), {
+              bold: true,
+              size: SZ_BODY,
+              widthTwips: metaCols[2],
+              borders: ALL_THIN_BORDERS,
+              marginTB: 20,
+            }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Memo no', { bold: true, borders: ALL_THIN_BORDERS }),
-            simpleCell(':', { bold: true, align: AlignmentType.CENTER, borders: ALL_THIN_BORDERS }),
-            simpleCell('', { borders: ALL_THIN_BORDERS }),
+            simpleCell('Memo no', { bold: true, size: SZ_META, widthTwips: metaCols[0], borders: ALL_THIN_BORDERS, marginTB: 20 }),
+            simpleCell(':', { bold: true, size: SZ_META, align: AlignmentType.CENTER, widthTwips: metaCols[1], borders: ALL_THIN_BORDERS, marginTB: 20 }),
+            simpleCell('', { size: SZ_BODY, widthTwips: metaCols[2], borders: ALL_THIN_BORDERS, marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('To', { bold: true, borders: ALL_THIN_BORDERS }),
-            simpleCell(':', { bold: true, align: AlignmentType.CENTER, borders: ALL_THIN_BORDERS }),
-            simpleCell('Investment Committee', { bold: true, borders: ALL_THIN_BORDERS }),
+            simpleCell('To', { bold: true, size: SZ_META, widthTwips: metaCols[0], borders: ALL_THIN_BORDERS, marginTB: 20 }),
+            simpleCell(':', { bold: true, size: SZ_META, align: AlignmentType.CENTER, widthTwips: metaCols[1], borders: ALL_THIN_BORDERS, marginTB: 20 }),
+            simpleCell('Investment Committee', { bold: true, size: SZ_META, widthTwips: metaCols[2], borders: ALL_THIN_BORDERS, marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('From', { bold: true, borders: ALL_THIN_BORDERS }),
-            simpleCell(':', { bold: true, align: AlignmentType.CENTER, borders: ALL_THIN_BORDERS }),
-            simpleCell('SAMD', { bold: true, borders: ALL_THIN_BORDERS }),
+            simpleCell('From', { bold: true, size: SZ_META, widthTwips: metaCols[0], borders: ALL_THIN_BORDERS, marginTB: 20 }),
+            simpleCell(':', { bold: true, size: SZ_META, align: AlignmentType.CENTER, widthTwips: metaCols[1], borders: ALL_THIN_BORDERS, marginTB: 20 }),
+            simpleCell('SAMD', { bold: true, size: SZ_META, widthTwips: metaCols[2], borders: ALL_THIN_BORDERS, marginTB: 20 }),
           ],
         }),
       ],
     }),
-    p([], { before: 40, after: 40 })
+    p([], { before: 20, after: 20, line: 140 })
   );
 
-  // A/C and Branch Bar
+  // A/C and Branch Bar + Subject
+  const acCols = pctWidths([58, 42]);
   body.push(
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: acCols,
       rows: [
         new TableRow({
+          cantSplit: true,
           children: [
             simpleCell(`A/C: ${v('#2#')} (CIS: ${v('#69#')})`, {
               bold: true,
-              widthPct: 60,
+              size: SZ_BODY,
+              align: AlignmentType.CENTER,
+              widthTwips: acCols[0],
               borders: ALL_DOTTED_BORDERS,
             }),
             simpleCell(`Branch: ${v('#3#')}`, {
               bold: true,
-              widthPct: 40,
+              size: SZ_BODY,
+              align: AlignmentType.CENTER,
+              widthTwips: acCols[1],
               borders: ALL_DOTTED_BORDERS,
             }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
             cell(
               [
-                p([
-                  txt(
-                    `Subject: The customer proposed for full and final settlement of their liability by allowing waiver of Tk.${v('#4#')} along with profit/compensation to be accrued up to the date of full and final settlement as follows:`,
-                    { bold: true, size: SZ_BODY }
-                  ),
-                ]),
+                p(
+                  [
+                    txt(
+                      `Subject: The customer proposed for full and final settlement of their liability by allowing waiver of Tk.${v('#4#')} along with profit/compensation to be accrued up to the date of full and final settlement as follows:`,
+                      { bold: true, size: SZ_BODY }
+                    ),
+                  ],
+                  { before: 10, after: 10, line: 225 }
+                ),
               ],
-              { columnSpan: 2, borders: ALL_DOTTED_BORDERS }
+              { columnSpan: 2, widthTwips: BODY_WIDTH_TWIPS, borders: ALL_DOTTED_BORDERS }
             ),
           ],
         }),
@@ -370,107 +482,135 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
   );
 
   body.push(
-    p([txt('[All Figures in this Memo are in Million BDT Unless Stated Otherwise]', { bold: true, size: SZ_SMALL })], {
-      align: AlignmentType.RIGHT,
-      before: 40,
-      after: 40,
-    })
+    p(
+      [
+        txt('[All Figures in this Memo are in Million BDT Unless Stated Otherwise]', {
+          bold: true,
+          size: SZ_BODY,
+        }),
+      ],
+      {
+        align: AlignmentType.RIGHT,
+        before: 30,
+        after: 25,
+      }
+    )
   );
 
   // Main Settlement Table
+  const mainCols = pctWidths([12, 8, 7, 21, 11, 11, 11, 19]);
   const remarksBlock = `1)Settlement Deadline:\n${v('#28#')}\n\n2) Break up\nPrincipal: ${v('#7#')}\nCharges: ${v('#8#')}\nCOF: ${v('#31#')}\nTotal: ${v('#32#')}\n\n3) Security Value:\nMV: ${v('#33#')}\nFSV: ${v('#34#')}`;
 
   body.push(
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: mainCols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Mode', { bold: true, rowSpan: 2, widthPct: 12, align: AlignmentType.CENTER }),
-            simpleCell('Limit', { bold: true, columnSpan: 2, widthPct: 14, align: AlignmentType.CENTER }),
-            simpleCell('Particulars', { bold: true, rowSpan: 2, widthPct: 21, align: AlignmentType.CENTER }),
-            simpleCell(`O/S as on ${v('#68#')}`, { bold: true, widthPct: 12, align: AlignmentType.CENTER }),
-            simpleCell('Proposed Waiver', { bold: true, widthPct: 12, align: AlignmentType.CENTER }),
-            simpleCell('Settlement Amount', { bold: true, widthPct: 12, align: AlignmentType.CENTER }),
-            simpleCell('Remarks', { bold: true, rowSpan: 2, widthPct: 17, align: AlignmentType.CENTER }),
+            simpleCell('Mode', { bold: true, rowSpan: 2, widthTwips: mainCols[0], align: AlignmentType.CENTER }),
+            simpleCell('Limit', { bold: true, columnSpan: 2, widthTwips: mainCols[1] + mainCols[2], align: AlignmentType.CENTER }),
+            simpleCell('Particulars', { bold: true, rowSpan: 2, widthTwips: mainCols[3], align: AlignmentType.CENTER }),
+            simpleCell(`O/S as on ${v('#68#')}`, { bold: true, widthTwips: mainCols[4], align: AlignmentType.CENTER }),
+            simpleCell('Proposed Waiver', { bold: true, widthTwips: mainCols[5], align: AlignmentType.CENTER }),
+            simpleCell('Settlement Amount', { bold: true, widthTwips: mainCols[6], align: AlignmentType.CENTER }),
+            simpleCell('Remarks', { bold: true, rowSpan: 2, widthTwips: mainCols[7], align: AlignmentType.CENTER }),
           ],
         }),
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Original', { bold: true, align: AlignmentType.CENTER, widthPct: 8 }),
-            simpleCell('RSD', { bold: true, align: AlignmentType.CENTER, widthPct: 6 }),
-            simpleCell('01', { bold: true, align: AlignmentType.CENTER }),
-            simpleCell('02', { bold: true, align: AlignmentType.CENTER }),
-            simpleCell('03 (1-2)', { bold: true, align: AlignmentType.CENTER }),
+            simpleCell('Original', { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[1] }),
+            simpleCell('RSD', { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[2] }),
+            simpleCell('01', { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[4] }),
+            simpleCell('02', { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[5] }),
+            simpleCell('03 (1-2)', { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[6] }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell(v('#5#'), { bold: true, rowSpan: 7 }),
-            simpleCell(v('#6#'), { bold: true, rowSpan: 7, align: AlignmentType.CENTER }),
-            simpleCell(bp?.limitRSD || '-', { rowSpan: 7, align: AlignmentType.CENTER }),
-            simpleCell('Principal'),
-            simpleCell(v('#7#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell('', { align: AlignmentType.CENTER }),
-            simpleCell('', { align: AlignmentType.CENTER }),
-            simpleCell(remarksBlock, { bold: true, rowSpan: 7 }),
+            simpleCell(v('#5#'), { bold: true, rowSpan: 7, widthTwips: mainCols[0] }),
+            simpleCell(v('#6#'), { bold: true, rowSpan: 7, align: AlignmentType.CENTER, widthTwips: mainCols[1] }),
+            simpleCell(bp?.limitRSD || '_', { rowSpan: 7, align: AlignmentType.CENTER, widthTwips: mainCols[2] }),
+            simpleCell('Principal', { size: SZ_PARTICULARS, widthTwips: mainCols[3], marginTB: 20 }),
+            simpleCell(v('#7#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 20 }),
+            simpleCell('', { align: AlignmentType.CENTER, widthTwips: mainCols[5], marginTB: 20 }),
+            simpleCell('', { align: AlignmentType.CENTER, widthTwips: mainCols[6], marginTB: 20 }),
+            simpleCell(remarksBlock, { bold: true, rowSpan: 7, widthTwips: mainCols[7] }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Charges (Legal & Others)'),
-            simpleCell(v('#8#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(''),
-            simpleCell(''),
+            simpleCell('Charges (Legal & Others)', { size: SZ_PARTICULARS, widthTwips: mainCols[3], marginTB: 20 }),
+            simpleCell(v('#8#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[6], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Gestation Rent'),
-            simpleCell('-', { align: AlignmentType.CENTER }),
-            simpleCell(''),
-            simpleCell(''),
+            simpleCell('Gestation Rent', { size: SZ_PARTICULARS, widthTwips: mainCols[3], marginTB: 20 }),
+            simpleCell('-', { align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[6], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Charged Profit'),
-            simpleCell(v('#10#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(''),
-            simpleCell(''),
+            simpleCell('Charged Profit', { size: SZ_PARTICULARS, widthTwips: mainCols[3], marginTB: 20 }),
+            simpleCell(v('#10#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[6], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Compensation'),
-            simpleCell(v('#11#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(''),
-            simpleCell(''),
+            simpleCell('Compensation', { size: SZ_PARTICULARS, widthTwips: mainCols[3], marginTB: 20 }),
+            simpleCell(v('#11#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[6], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Uncharged Compensation'),
-            simpleCell(v('#12#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(''),
-            simpleCell(''),
+            simpleCell('Uncharged Compensation', { size: SZ_PARTICULARS, widthTwips: mainCols[3], marginTB: 20 }),
+            simpleCell(v('#12#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: mainCols[6], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Uncharged Profit (for T/L)'),
-            simpleCell('-', { align: AlignmentType.CENTER }),
-            simpleCell('-', { align: AlignmentType.CENTER }),
-            simpleCell('-', { align: AlignmentType.CENTER }),
+            simpleCell('Uncharged Profit (for T/L)', { size: SZ_PARTICULARS, widthTwips: mainCols[3], marginTB: 20 }),
+            simpleCell('-', { align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 20 }),
+            simpleCell('-', { align: AlignmentType.CENTER, widthTwips: mainCols[5], marginTB: 20 }),
+            simpleCell('-', { align: AlignmentType.CENTER, widthTwips: mainCols[6], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Grand-Total', { bold: true, columnSpan: 4, align: AlignmentType.RIGHT }),
-            simpleCell(v('#25#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#4#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#27#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(''),
+            simpleCell('Grand-Total', {
+              bold: true,
+              columnSpan: 4,
+              align: AlignmentType.CENTER,
+              widthTwips: mainCols[0] + mainCols[1] + mainCols[2] + mainCols[3],
+              marginTB: 25,
+            }),
+            simpleCell(v('#25#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[4], marginTB: 25 }),
+            simpleCell(v('#4#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[5], marginTB: 25 }),
+            simpleCell(v('#27#'), { bold: true, align: AlignmentType.CENTER, widthTwips: mainCols[6], marginTB: 25 }),
+            simpleCell('', { widthTwips: mainCols[7], marginTB: 25 }),
           ],
         }),
       ],
@@ -480,13 +620,15 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
   // Note line
   body.push(
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: [BODY_WIDTH_TWIPS],
       rows: [
         new TableRow({
+          cantSplit: true,
           children: [
             simpleCell(
               `Note: Information Regarding Down payment (deposited Tk.${v('#35#')} Million in A/C: ${v('#36#')} on ${v('#68#')}.)`,
-              { bold: true, size: SZ_SMALL }
+              { bold: true, size: SZ_BODY, widthTwips: BODY_WIDTH_TWIPS, marginTB: 25 }
             ),
           ],
         }),
@@ -495,71 +637,94 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
   );
 
   // Key Points
+  const kpCols = pctWidths([5, 42, 11, 5, 22, 15]);
   body.push(
-    p([txt('Key Points:', { bold: true, underline: true })], { before: 70, after: 20 }),
-    p([
-      txt('This Memo is placed in conformity with ', { size: SZ_SMALL }),
-      txt('BRPD 1 Circular Letter No. 23 dated 29.06.2026', { bold: true, size: SZ_SMALL }),
-      txt(' under the following contexts:', { size: SZ_SMALL }),
-    ]),
+    p([txt('Key Points:', { bold: true, underline: true })], { before: 45, after: 15 }),
+    p(
+      [
+        txt('This Memo is placed in conformity with ', { size: SZ_BODY }),
+        txt('BRPD 1 Circular Letter No. 23 dated 29.06.2026', { bold: true, size: SZ_BODY }),
+        txt(' under the following contexts:', { size: SZ_BODY }),
+      ],
+      { before: 15, after: 25 }
+    ),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: kpCols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Particulars', { bold: true, columnSpan: 3, widthPct: 58 }),
-            simpleCell('Waiver recommended by:', { bold: true, columnSpan: 3, widthPct: 42 }),
+            simpleCell('Particulars', {
+              bold: true,
+              columnSpan: 3,
+              widthTwips: kpCols[0] + kpCols[1] + kpCols[2],
+              marginTB: 20,
+            }),
+            simpleCell('Waiver recommended by:', {
+              bold: true,
+              columnSpan: 3,
+              widthTwips: kpCols[3] + kpCols[4] + kpCols[5],
+              marginTB: 20,
+            }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('a.', { widthPct: 5 }),
-            simpleCell('Total [Profit+ Compensation+ Uncharged Comp.& Profit]', { widthPct: 40 }),
-            simpleCell(`: ${v('#42#')}`, { bold: true, widthPct: 13 }),
-            simpleCell('d.', { widthPct: 5 }),
-            simpleCell('Client', { widthPct: 22 }),
-            simpleCell(`: ${v('#45#')}`, { bold: true, widthPct: 15 }),
+            simpleCell('a.', { widthTwips: kpCols[0], marginTB: 20 }),
+            simpleCell('Total [Profit+ Compensation+ Uncharged Comp.& Profit]', { widthTwips: kpCols[1], marginTB: 20 }),
+            simpleCell(`: ${v('#42#')}`, { bold: true, widthTwips: kpCols[2], marginTB: 20 }),
+            simpleCell('d.', { widthTwips: kpCols[3], marginTB: 20 }),
+            simpleCell('Client', { widthTwips: kpCols[4], marginTB: 20 }),
+            simpleCell(`: ${v('#45#')}`, { bold: true, widthTwips: kpCols[5], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('b.'),
-            simpleCell('Cost of Fund'),
-            simpleCell(`: ${v('#31#')}`, { bold: true }),
-            simpleCell('e.'),
-            simpleCell('Branch'),
-            simpleCell(`: ${v('#45#')}`, { bold: true }),
+            simpleCell('b.', { widthTwips: kpCols[0], marginTB: 20 }),
+            simpleCell('Cost of Fund', { widthTwips: kpCols[1], marginTB: 20 }),
+            simpleCell(`: ${v('#31#')}`, { bold: true, widthTwips: kpCols[2], marginTB: 20 }),
+            simpleCell('e.', { widthTwips: kpCols[3], marginTB: 20 }),
+            simpleCell('Branch', { widthTwips: kpCols[4], marginTB: 20 }),
+            simpleCell(`: ${v('#45#')}`, { bold: true, widthTwips: kpCols[5], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('c.', { rowSpan: 4 }),
-            simpleCell('Maximum Waiver Considering COF [a-b]', { rowSpan: 4 }),
-            simpleCell(`: ${v('#44#')}`, { bold: true, rowSpan: 4 }),
-            simpleCell('f.'),
-            simpleCell('SAMD, HO'),
-            simpleCell(`: ${v('#47#')}`, { bold: true }),
+            simpleCell('c.', { rowSpan: 4, widthTwips: kpCols[0], marginTB: 20 }),
+            simpleCell('Maximum Waiver Considering COF [a-b]', { rowSpan: 4, widthTwips: kpCols[1], marginTB: 20 }),
+            simpleCell(`: ${v('#44#')}`, { bold: true, rowSpan: 4, widthTwips: kpCols[2], marginTB: 20 }),
+            simpleCell('f.', { widthTwips: kpCols[3], marginTB: 20 }),
+            simpleCell('SAMD, HO', { widthTwips: kpCols[4], marginTB: 20 }),
+            simpleCell(`: ${v('#47#')}`, { bold: true, widthTwips: kpCols[5], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('g.'),
-            simpleCell('HOIC'),
-            simpleCell(`: ${v('#47#')}`, { bold: true }),
+            simpleCell('g.', { widthTwips: kpCols[3], marginTB: 20 }),
+            simpleCell('HOIC', { widthTwips: kpCols[4], marginTB: 20 }),
+            simpleCell(`: ${v('#47#')}`, { bold: true, widthTwips: kpCols[5], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('h.'),
-            simpleCell('MEC'),
-            simpleCell(`: ${v('#47#')}`, { bold: true }),
+            simpleCell('h.', { widthTwips: kpCols[3], marginTB: 20 }),
+            simpleCell('MEC', { widthTwips: kpCols[4], marginTB: 20 }),
+            simpleCell(`: ${v('#47#')}`, { bold: true, widthTwips: kpCols[5], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('i.'),
-            simpleCell('IC & CD'),
-            simpleCell(`: ${v('#47#')}`, { bold: true }),
+            simpleCell('i.', { widthTwips: kpCols[3], marginTB: 20 }),
+            simpleCell('IC & CD', { widthTwips: kpCols[4], marginTB: 20 }),
+            simpleCell(`: ${v('#47#')}`, { bold: true, widthTwips: kpCols[5], marginTB: 20 }),
           ],
         }),
       ],
@@ -571,191 +736,341 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     ? memo.justificationLines.split('\n').map((l) => l.trim()).filter(Boolean)
     : [];
   body.push(
-    p([txt('Justification of The Proposed Facility:', { bold: true, underline: true })], { before: 70, after: 20 })
+    p([txt('Justification of The Proposed Facility:', { bold: true, underline: true })], { before: 45, after: 15 })
   );
   if (justLines.length > 0) {
-    body.push(p([txt('a. ', { bold: true }), txt(justLines.join(' '))], { indentLeft: 180 }));
+    body.push(p([txt('a. ', { bold: true }), txt(justLines.join(' '))], { indentLeft: 120, before: 15, after: 15 }));
   } else {
-    body.push(p([txt(`a. ${v('#51#')}`)], { indentLeft: 180 }));
+    body.push(p([txt(`a. ${v('#51#')}`)], { indentLeft: 120, before: 15, after: 15 }));
   }
   body.push(
-    p([txt('b. Investment was not created against any fraud and forgery.')], { indentLeft: 180 }),
-    p([txt('c. The client is not a willful defaulter.')], { indentLeft: 180 }),
+    p([txt('b. Investment was not created against any fraud and forgery.')], { indentLeft: 120, before: 15, after: 15 }),
+    p([txt('c. The client is not a willful defaulter.')], { indentLeft: 120, before: 15, after: 15 }),
     p([txt('Previous Board Decision(s) Regarding Rescheduling/Waiver/Written-Off: Nil', { bold: true })], {
-      before: 50,
-      after: 40,
+      before: 30,
+      after: 30,
     })
   );
 
   // Section 1
   body.push(
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: [BODY_WIDTH_TWIPS],
       rows: [
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell(`1. Nature of Business: ${v('#54#')}`, { bold: true, size: SZ_BODY }),
+            simpleCell(`1. Nature of Business: ${v('#54#')}`, {
+              bold: true,
+              size: SZ_BODY,
+              widthTwips: BODY_WIDTH_TWIPS,
+              marginTB: 20,
+            }),
           ],
         }),
       ],
     })
   );
 
-  // Section 2
+  // Section 2 (matching IC_Memo.pdf Page 1 with 2 spacer rows between Funded and Non Funded)
+  const sec2Cols = pctWidths([14, 17, 10, 11, 11, 10, 17, 10]);
   body.push(
-    p([txt(`2. Liability Position of the Clients and Its Sister Concerns with Our Bank as on ${v('#68#')}:`, { bold: true })], {
-      before: 60,
-      after: 20,
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({
-          children: [
-            simpleCell('Name of the Concern', { bold: true, widthPct: 14 }),
-            simpleCell('Mode of Investment', { bold: true, widthPct: 16 }),
-            simpleCell('Limit', { bold: true, widthPct: 10, align: AlignmentType.CENTER }),
-            simpleCell('Outstanding', { bold: true, widthPct: 12, align: AlignmentType.CENTER }),
-            simpleCell('Validity', { bold: true, widthPct: 12, align: AlignmentType.CENTER }),
-            simpleCell('Overdue', { bold: true, widthPct: 10, align: AlignmentType.CENTER }),
-            simpleCell('Recovery in existing deals till date [Mode wise]', { bold: true, widthPct: 16, align: AlignmentType.CENTER }),
-            simpleCell('Remarks', { bold: true, widthPct: 10 }),
-          ],
-        }),
-        new TableRow({
-          children: [
-            simpleCell(v('#2#'), { bold: true, rowSpan: 2 }),
-            simpleCell(`${v('#55#')}\nFunded`, { bold: true }),
-            simpleCell(v('#56#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#25#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#58#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#59#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#60#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(bp?.sec2Remarks || ''),
-          ],
-        }),
-        new TableRow({
-          children: [
-            simpleCell('Non Funded', { bold: true }),
-            simpleCell(''),
-            simpleCell(''),
-            simpleCell(''),
-            simpleCell(''),
-            simpleCell(''),
-            simpleCell(''),
-          ],
-        }),
-        new TableRow({
-          children: [
-            simpleCell('Total', { bold: true, columnSpan: 2, align: AlignmentType.RIGHT }),
-            simpleCell(v('#56#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#25#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#58#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#59#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(v('#60#'), { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(''),
-          ],
-        }),
-      ],
-    })
-  );
-
-  // Section 3 (from Branch Proposal)
-  const sec3Rows = bp?.section3Rows && bp.section3Rows.length > 0
-    ? bp.section3Rows
-    : [
-        { sl: 'a.', nameOfConcern: '', bankOrNbfi: '', natureOfFacility: '', limit: '', outstanding: '', overdueEol: '', expiryDate: '', clStatus: '' },
-        { sl: 'b.', nameOfConcern: '', bankOrNbfi: '', natureOfFacility: '', limit: '', outstanding: '', overdueEol: '', expiryDate: '', clStatus: '' },
-        { sl: 'c.', nameOfConcern: '', bankOrNbfi: '', natureOfFacility: '', limit: '', outstanding: '', overdueEol: '', expiryDate: '', clStatus: '' },
-      ];
-  body.push(
-    p([txt('3. Liability of the Client & Its Sister/Allied Concerns with Other Units of SIB:', { bold: true, underline: true })], {
-      before: 70,
-      after: 20,
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({
-          children: [
-            simpleCell('SL', { bold: true, widthPct: 5 }),
-            simpleCell('Name of Concern', { bold: true, widthPct: 14 }),
-            simpleCell('Name of the Banks/NBFIs', { bold: true, widthPct: 17 }),
-            simpleCell('Nature of Facility', { bold: true, widthPct: 12 }),
-            simpleCell('Limit', { bold: true, widthPct: 9 }),
-            simpleCell('Outstanding with profit/Interest', { bold: true, widthPct: 15 }),
-            simpleCell('Overdue/EOL', { bold: true, widthPct: 10 }),
-            simpleCell('Expiry Date', { bold: true, widthPct: 10 }),
-            simpleCell('CL Status', { bold: true, widthPct: 8 }),
-          ],
-        }),
-        ...sec3Rows.map(
-          (r) =>
-            new TableRow({
-              children: [
-                simpleCell(r.sl),
-                simpleCell(r.nameOfConcern),
-                simpleCell(r.bankOrNbfi),
-                simpleCell(r.natureOfFacility),
-                simpleCell(r.limit),
-                simpleCell(r.outstanding),
-                simpleCell(r.overdueEol),
-                simpleCell(r.expiryDate),
-                simpleCell(r.clStatus),
-              ],
-            })
+    p(
+      [
+        txt(
+          `2. Liability Position of the Clients and Its Sister Concerns with Our Bank as on ${v('#68#')}:`,
+          { bold: true }
         ),
       ],
-    })
-  );
-
-  // Section 4 (CIB Status: Report dated #62# shows, table from Branch Proposal)
-  const defaultCibStatuses = ['STD', 'SMA', 'SS', 'DF', 'BL', 'Willful Default (WD)', 'Write-Off', 'Non-Funded', 'Stay Order', 'TOTAL'];
-  const sec4Rows = bp?.section4Rows && bp.section4Rows.length > 0
-    ? bp.section4Rows
-    : defaultCibStatuses.map((s) => ({
-        status: s,
-        unitBorrower: '',
-        unitGuarantor: '',
-        otherBorrower: '',
-        otherGuarantor: '',
-        remarks: '',
-      }));
-
-  body.push(
-    p([
-      txt('4. CIB Status: ', { bold: true, underline: true }),
-      txt(`Report dated ${v('#62#')} shows:`, { bold: true }),
-    ], { before: 70, after: 20 }),
+      { before: 40, after: 20 }
+    ),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec2Cols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('STATUS', { bold: true, rowSpan: 2, widthPct: 18 }),
-            simpleCell('With respective unit', { bold: true, columnSpan: 2, widthPct: 26, align: AlignmentType.CENTER }),
-            simpleCell('With Other Bank', { bold: true, columnSpan: 2, widthPct: 26, align: AlignmentType.CENTER }),
-            simpleCell('Remarks\n(Pls. give concern wise Breakup)', { bold: true, rowSpan: 2, widthPct: 30, align: AlignmentType.CENTER }),
+            simpleCell('Name of the Concern', { bold: true, widthTwips: sec2Cols[0], marginTB: 20 }),
+            simpleCell('Mode of Investment', { bold: true, widthTwips: sec2Cols[1], marginTB: 20 }),
+            simpleCell('Limit', { bold: true, widthTwips: sec2Cols[2], align: AlignmentType.CENTER, marginTB: 20 }),
+            simpleCell('Outstanding', { bold: true, widthTwips: sec2Cols[3], align: AlignmentType.CENTER, marginTB: 20 }),
+            simpleCell('Validity', { bold: true, widthTwips: sec2Cols[4], align: AlignmentType.CENTER, marginTB: 20 }),
+            simpleCell('Overdue', { bold: true, widthTwips: sec2Cols[5], align: AlignmentType.CENTER, marginTB: 20 }),
+            simpleCell('Recovery in existing deals till date [Mode wise]', {
+              bold: true,
+              widthTwips: sec2Cols[6],
+              align: AlignmentType.CENTER,
+              marginTB: 20,
+            }),
+            simpleCell('Remarks', { bold: true, widthTwips: sec2Cols[7], marginTB: 20 }),
           ],
         }),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell('Borrower', { bold: true, align: AlignmentType.CENTER }),
-            simpleCell('Guarantor', { bold: true, align: AlignmentType.CENTER }),
-            simpleCell('Borrower', { bold: true, align: AlignmentType.CENTER }),
-            simpleCell('Guarantor', { bold: true, align: AlignmentType.CENTER }),
+            simpleCell(v('#2#'), { bold: true, rowSpan: 4, widthTwips: sec2Cols[0], marginTB: 20 }),
+            simpleCell(`${v('#55#')}\nFunded`, { bold: true, widthTwips: sec2Cols[1], marginTB: 20 }),
+            simpleCell(v('#56#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[2], marginTB: 20 }),
+            simpleCell(v('#25#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[3], marginTB: 20 }),
+            simpleCell(v('#58#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[4], marginTB: 20 }),
+            simpleCell(v('#59#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[5], marginTB: 20 }),
+            simpleCell(v('#60#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[6], marginTB: 20 }),
+            simpleCell(bp?.sec2Remarks || '', { widthTwips: sec2Cols[7], marginTB: 20 }),
+          ],
+        }),
+        new TableRow({
+          cantSplit: true,
+          children: [
+            simpleCell('', { widthTwips: sec2Cols[1], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[2], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[3], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[6], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[7], marginTB: 20 }),
+          ],
+        }),
+        new TableRow({
+          cantSplit: true,
+          children: [
+            simpleCell('', { widthTwips: sec2Cols[1], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[2], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[3], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[6], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[7], marginTB: 20 }),
+          ],
+        }),
+        new TableRow({
+          cantSplit: true,
+          children: [
+            simpleCell('Non Funded', { bold: true, widthTwips: sec2Cols[1], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[2], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[3], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[4], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[5], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[6], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[7], marginTB: 20 }),
+          ],
+        }),
+        new TableRow({
+          cantSplit: true,
+          children: [
+            simpleCell('Total', {
+              bold: true,
+              columnSpan: 2,
+              align: AlignmentType.CENTER,
+              widthTwips: sec2Cols[0] + sec2Cols[1],
+              marginTB: 20,
+            }),
+            simpleCell(v('#56#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[2], marginTB: 20 }),
+            simpleCell(v('#25#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[3], marginTB: 20 }),
+            simpleCell(v('#58#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[4], marginTB: 20 }),
+            simpleCell(v('#59#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[5], marginTB: 20 }),
+            simpleCell(v('#60#'), { bold: true, align: AlignmentType.CENTER, widthTwips: sec2Cols[6], marginTB: 20 }),
+            simpleCell('', { widthTwips: sec2Cols[7], marginTB: 20 }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  // Section 3 (Starts at top of Page 2 in exact reference IC_Memo.pdf)
+  const rawSec3Rows =
+    bp?.section3Rows && bp.section3Rows.length > 0
+      ? bp.section3Rows
+      : [
+          { sl: 'a.', nameOfConcern: '', bankOrNbfi: '', natureOfFacility: '', limit: '', outstanding: '', overdueEol: '', expiryDate: '', clStatus: '' },
+          { sl: 'b.', nameOfConcern: '', bankOrNbfi: '', natureOfFacility: '', limit: '', outstanding: '', overdueEol: '', expiryDate: '', clStatus: '' },
+          { sl: 'c.', nameOfConcern: '', bankOrNbfi: '', natureOfFacility: '', limit: '', outstanding: '', overdueEol: '', expiryDate: '', clStatus: '' },
+        ];
+  const hasSec3SubTotal = rawSec3Rows.some((r) => /sub[-\s]*total/i.test(r.sl) || /sub[-\s]*total/i.test(r.nameOfConcern));
+  const hasSec3GrandTotal = rawSec3Rows.some((r) => /grand\s*total/i.test(r.sl) || /grand\s*total/i.test(r.nameOfConcern));
+  const sec3Cols = pctWidths([5, 13, 17, 11, 8, 17, 11, 10, 8]);
+
+  body.push(
+    p(
+      [
+        txt('3. Liability of the Client & Its Sister/Allied Concerns with Other Units of SIB:', {
+          bold: true,
+          underline: true,
+        }),
+      ],
+      { before: 0, after: 20, pageBreakBefore: true }
+    ),
+    new Table({
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec3Cols,
+      rows: [
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            simpleCell('SL', { bold: true, widthTwips: sec3Cols[0], align: AlignmentType.CENTER, marginTB: 20 }),
+            simpleCell('Name of Concern', { bold: true, widthTwips: sec3Cols[1], marginTB: 20 }),
+            simpleCell('Name of the Banks/NBFIs', { bold: true, widthTwips: sec3Cols[2], marginTB: 20 }),
+            simpleCell('Nature of Facility', { bold: true, widthTwips: sec3Cols[3], marginTB: 20 }),
+            simpleCell('Limit', { bold: true, widthTwips: sec3Cols[4], marginTB: 20 }),
+            simpleCell('Outstanding with profit/Interest', { bold: true, widthTwips: sec3Cols[5], marginTB: 20 }),
+            simpleCell('Overdue/EOL', { bold: true, widthTwips: sec3Cols[6], marginTB: 20 }),
+            simpleCell('Expiry Date', { bold: true, widthTwips: sec3Cols[7], marginTB: 20 }),
+            simpleCell('CL Status', { bold: true, widthTwips: sec3Cols[8], marginTB: 20 }),
+          ],
+        }),
+        ...rawSec3Rows.map((r) => {
+          const isTotalRow = /sub[-\s]*total|grand\s*total/i.test(r.sl) || /sub[-\s]*total|grand\s*total/i.test(r.nameOfConcern);
+          return new TableRow({
+            cantSplit: true,
+            children: [
+              simpleCell(r.sl, { bold: isTotalRow, widthTwips: sec3Cols[0], marginTB: 20 }),
+              simpleCell(r.nameOfConcern, { bold: isTotalRow, widthTwips: sec3Cols[1], marginTB: 20 }),
+              simpleCell(r.bankOrNbfi, { bold: isTotalRow, widthTwips: sec3Cols[2], marginTB: 20 }),
+              simpleCell(r.natureOfFacility, { bold: isTotalRow, widthTwips: sec3Cols[3], marginTB: 20 }),
+              simpleCell(r.limit, { bold: isTotalRow, widthTwips: sec3Cols[4], marginTB: 20 }),
+              simpleCell(r.outstanding, { bold: isTotalRow, widthTwips: sec3Cols[5], marginTB: 20 }),
+              simpleCell(r.overdueEol, { bold: isTotalRow, widthTwips: sec3Cols[6], marginTB: 20 }),
+              simpleCell(r.expiryDate, { bold: isTotalRow, widthTwips: sec3Cols[7], marginTB: 20 }),
+              simpleCell(r.clStatus, { bold: isTotalRow, widthTwips: sec3Cols[8], marginTB: 20 }),
+            ],
+          });
+        }),
+        ...(!hasSec3SubTotal
+          ? [
+              new TableRow({
+                cantSplit: true,
+                children: [
+                  simpleCell('Sub-Total', {
+                    bold: true,
+                    columnSpan: 4,
+                    align: AlignmentType.CENTER,
+                    widthTwips: sec3Cols[0] + sec3Cols[1] + sec3Cols[2] + sec3Cols[3],
+                    marginTB: 20,
+                  }),
+                  simpleCell('', { widthTwips: sec3Cols[4], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[5], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[6], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[7], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[8], marginTB: 20 }),
+                ],
+              }),
+            ]
+          : []),
+        ...(!hasSec3GrandTotal
+          ? [
+              new TableRow({
+                cantSplit: true,
+                children: [
+                  simpleCell('Grand Total', {
+                    bold: true,
+                    columnSpan: 4,
+                    align: AlignmentType.CENTER,
+                    widthTwips: sec3Cols[0] + sec3Cols[1] + sec3Cols[2] + sec3Cols[3],
+                    marginTB: 20,
+                  }),
+                  simpleCell('', { widthTwips: sec3Cols[4], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[5], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[6], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[7], marginTB: 20 }),
+                  simpleCell('', { widthTwips: sec3Cols[8], marginTB: 20 }),
+                ],
+              }),
+            ]
+          : []),
+      ],
+    })
+  );
+
+  // Section 4 (CIB Status)
+  const defaultCibStatuses = [
+    'STD',
+    'SMA',
+    'SS',
+    'DF',
+    'BL',
+    'Willful Default (WD)',
+    'Write-Off',
+    'Non-Funded',
+    'Stay Order',
+    'TOTAL',
+  ];
+  const sec4Rows =
+    bp?.section4Rows && bp.section4Rows.length > 0
+      ? bp.section4Rows
+      : defaultCibStatuses.map((s) => ({
+          status: s,
+          unitBorrower: '',
+          unitGuarantor: '',
+          otherBorrower: '',
+          otherGuarantor: '',
+          remarks: '',
+        }));
+  const sec4Cols = pctWidths([18, 13, 13, 13, 13, 30]);
+
+  body.push(
+    p(
+      [
+        txt('4. CIB Status: ', { bold: true, underline: true }),
+        txt(`Report dated ${v('#62#')} shows:`, { bold: true }),
+      ],
+      { before: 50, after: 20 }
+    ),
+    new Table({
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec4Cols,
+      rows: [
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            simpleCell('STATUS', { bold: true, rowSpan: 2, widthTwips: sec4Cols[0], marginTB: 20 }),
+            simpleCell('With respective unit', {
+              bold: true,
+              columnSpan: 2,
+              widthTwips: sec4Cols[1] + sec4Cols[2],
+              align: AlignmentType.CENTER,
+              marginTB: 20,
+            }),
+            simpleCell('With Other Bank', {
+              bold: true,
+              columnSpan: 2,
+              widthTwips: sec4Cols[3] + sec4Cols[4],
+              align: AlignmentType.CENTER,
+              marginTB: 20,
+            }),
+            simpleCell('Remarks\n(Pls. give concern wise Breakup)', {
+              bold: true,
+              rowSpan: 2,
+              widthTwips: sec4Cols[5],
+              align: AlignmentType.CENTER,
+              marginTB: 20,
+            }),
+          ],
+        }),
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            simpleCell('Borrower', { bold: true, align: AlignmentType.CENTER, widthTwips: sec4Cols[1], marginTB: 20 }),
+            simpleCell('Guarantor', { bold: true, align: AlignmentType.CENTER, widthTwips: sec4Cols[2], marginTB: 20 }),
+            simpleCell('Borrower', { bold: true, align: AlignmentType.CENTER, widthTwips: sec4Cols[3], marginTB: 20 }),
+            simpleCell('Guarantor', { bold: true, align: AlignmentType.CENTER, widthTwips: sec4Cols[4], marginTB: 20 }),
           ],
         }),
         ...sec4Rows.map(
           (r) =>
             new TableRow({
+              cantSplit: true,
               children: [
-                simpleCell(r.status, { bold: /TOTAL/i.test(r.status) }),
-                simpleCell(r.unitBorrower, { align: AlignmentType.CENTER, bold: /TOTAL/i.test(r.status) }),
-                simpleCell(r.unitGuarantor, { align: AlignmentType.CENTER }),
-                simpleCell(r.otherBorrower, { align: AlignmentType.CENTER }),
-                simpleCell(r.otherGuarantor, { align: AlignmentType.CENTER }),
-                simpleCell(r.remarks),
+                simpleCell(r.status, { bold: /TOTAL/i.test(r.status), widthTwips: sec4Cols[0], marginTB: 18 }),
+                simpleCell(r.unitBorrower, { align: AlignmentType.CENTER, bold: /TOTAL/i.test(r.status), widthTwips: sec4Cols[1], marginTB: 18 }),
+                simpleCell(r.unitGuarantor, { align: AlignmentType.CENTER, widthTwips: sec4Cols[2], marginTB: 18 }),
+                simpleCell(r.otherBorrower, { align: AlignmentType.CENTER, widthTwips: sec4Cols[3], marginTB: 18 }),
+                simpleCell(r.otherGuarantor, { align: AlignmentType.CENTER, widthTwips: sec4Cols[4], marginTB: 18 }),
+                simpleCell(r.remarks, { widthTwips: sec4Cols[5], marginTB: 18 }),
               ],
             })
         ),
@@ -764,44 +1079,55 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
   );
 
   // Section 5 (Legal Action Status)
-  const sec5Rows = bp?.section5Rows && bp.section5Rows.length > 0
-    ? bp.section5Rows
-    : [{ sl: '', typeOfCase: '', caseNo: '', filingDate: '', amount: '', previousDate: '', nextDate: '', presentStatus: '' }];
+  const sec5Rows =
+    bp?.section5Rows && bp.section5Rows.length > 0
+      ? bp.section5Rows
+      : [{ sl: '', typeOfCase: '', caseNo: '', filingDate: '', amount: '', previousDate: '', nextDate: '', presentStatus: '' }];
+  const sec5Cols = pctWidths([5, 16, 13, 12, 12, 12, 12, 18]);
+
   body.push(
-    p([
-      txt('5. Legal Action Status as on Memo Date:', { bold: true, underline: true }),
-      ...(bp?.section5StatusNote ? [txt(` ${bp.section5StatusNote}`, { bold: true })] : []),
-    ], { before: 70, after: 20 }),
+    p(
+      [
+        txt('5. Legal Action Status as on Memo Date:', { bold: true, underline: true }),
+        ...(bp?.section5StatusNote ? [txt(` ${bp.section5StatusNote}`, { bold: true })] : []),
+      ],
+      { before: 50, after: 20 }
+    ),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec5Cols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Sl', { bold: true, widthPct: 5 }),
-            simpleCell('Type of Case', { bold: true, widthPct: 16 }),
-            simpleCell('Case No.', { bold: true, widthPct: 13 }),
-            simpleCell('Filling date', { bold: true, widthPct: 12 }),
-            simpleCell('Amount', { bold: true, widthPct: 12 }),
-            simpleCell('Previous date', { bold: true, widthPct: 12 }),
-            simpleCell('Next date', { bold: true, widthPct: 12 }),
-            simpleCell('Present status', { bold: true, widthPct: 18 }),
+            simpleCell('Sl', { bold: true, widthTwips: sec5Cols[0], marginTB: 20 }),
+            simpleCell('Type of Case', { bold: true, widthTwips: sec5Cols[1], marginTB: 20 }),
+            simpleCell('Case No.', { bold: true, widthTwips: sec5Cols[2], marginTB: 20 }),
+            simpleCell('Filling date', { bold: true, widthTwips: sec5Cols[3], marginTB: 20 }),
+            simpleCell('Amount', { bold: true, widthTwips: sec5Cols[4], marginTB: 20 }),
+            simpleCell('Previous date', { bold: true, widthTwips: sec5Cols[5], marginTB: 20 }),
+            simpleCell('Next date', { bold: true, widthTwips: sec5Cols[6], marginTB: 20 }),
+            simpleCell('Present status', { bold: true, widthTwips: sec5Cols[7], marginTB: 20 }),
           ],
         }),
-        ...sec5Rows.map(
-          (r) =>
-            new TableRow({
-              children: [
-                simpleCell(r.sl),
-                simpleCell(r.typeOfCase),
-                simpleCell(r.caseNo),
-                simpleCell(r.filingDate),
-                simpleCell(r.amount),
-                simpleCell(r.previousDate),
-                simpleCell(r.nextDate),
-                simpleCell(r.presentStatus),
-              ],
-            })
-        ),
+        ...sec5Rows.map((r) => {
+          const isEmpty = !r.sl && !r.typeOfCase && !r.caseNo;
+          const pad = isEmpty ? 120 : 25;
+          return new TableRow({
+            cantSplit: true,
+            children: [
+              simpleCell(r.sl, { widthTwips: sec5Cols[0], marginTB: pad }),
+              simpleCell(r.typeOfCase, { widthTwips: sec5Cols[1], marginTB: pad }),
+              simpleCell(r.caseNo, { widthTwips: sec5Cols[2], marginTB: pad }),
+              simpleCell(r.filingDate, { widthTwips: sec5Cols[3], marginTB: pad }),
+              simpleCell(r.amount, { widthTwips: sec5Cols[4], marginTB: pad }),
+              simpleCell(r.previousDate, { widthTwips: sec5Cols[5], marginTB: pad }),
+              simpleCell(r.nextDate, { widthTwips: sec5Cols[6], marginTB: pad }),
+              simpleCell(r.presentStatus, { widthTwips: sec5Cols[7], marginTB: pad }),
+            ],
+          });
+        }),
       ],
     })
   );
@@ -816,34 +1142,43 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     { sl: 'f', authority: 'ACC(Anti-Corruption Commission)', lastInspectionDate: 'Not done', objectionStatus: 'No', objections: '', branchReply: '' },
   ];
   const sec6Rows = bp?.section6Rows && bp.section6Rows.length > 0 ? bp.section6Rows : defaultSec6;
+  const sec6Cols = pctWidths([5, 24, 18, 15, 19, 19]);
+
   body.push(
-    p([
-      txt('6. Audit, Compliance and Regulatory Authority Related Status:', { bold: true, underline: true }),
-      ...(bp?.section6StatusNote ? [txt(` ${bp.section6StatusNote}`, { bold: true })] : []),
-    ], { before: 70, after: 20 }),
+    p(
+      [
+        txt('6. Audit, Compliance and Regulatory Authority Related Status:', { bold: true, underline: true }),
+        ...(bp?.section6StatusNote ? [txt(` ${bp.section6StatusNote}`, { bold: true })] : []),
+      ],
+      { before: 50, after: 20 }
+    ),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec6Cols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('SL', { bold: true, widthPct: 5 }),
-            simpleCell('Name of the Authority', { bold: true, widthPct: 24 }),
-            simpleCell('Last Inspection / Report Date', { bold: true, widthPct: 18 }),
-            simpleCell('Objection Status (Yes/No)', { bold: true, widthPct: 15 }),
-            simpleCell('Objections (If yes)', { bold: true, widthPct: 19 }),
-            simpleCell('Branch Reply/ Current Position', { bold: true, widthPct: 19 }),
+            simpleCell('SL', { bold: true, widthTwips: sec6Cols[0], marginTB: 20 }),
+            simpleCell('Name of the Authority', { bold: true, widthTwips: sec6Cols[1], marginTB: 20 }),
+            simpleCell('Last Inspection / Report Date', { bold: true, widthTwips: sec6Cols[2], marginTB: 20 }),
+            simpleCell('Objection Status (Yes/No)', { bold: true, widthTwips: sec6Cols[3], marginTB: 20 }),
+            simpleCell('Objections (If yes)', { bold: true, widthTwips: sec6Cols[4], marginTB: 20 }),
+            simpleCell('Branch Reply/ Current Position', { bold: true, widthTwips: sec6Cols[5], marginTB: 20 }),
           ],
         }),
         ...sec6Rows.map(
           (r) =>
             new TableRow({
+              cantSplit: true,
               children: [
-                simpleCell(r.sl),
-                simpleCell(r.authority),
-                simpleCell(r.lastInspectionDate),
-                simpleCell(r.objectionStatus),
-                simpleCell(r.objections),
-                simpleCell(r.branchReply),
+                simpleCell(r.sl, { widthTwips: sec6Cols[0], marginTB: 18 }),
+                simpleCell(r.authority, { widthTwips: sec6Cols[1], marginTB: 18 }),
+                simpleCell(r.lastInspectionDate, { widthTwips: sec6Cols[2], marginTB: 18 }),
+                simpleCell(r.objectionStatus, { widthTwips: sec6Cols[3], marginTB: 18 }),
+                simpleCell(r.objections, { widthTwips: sec6Cols[4], marginTB: 18 }),
+                simpleCell(r.branchReply, { widthTwips: sec6Cols[5], marginTB: 18 }),
               ],
             })
         ),
@@ -858,169 +1193,275 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     { particulars: 'iii) Assignment of Bills against Work Order', value: '' },
     { particulars: 'iv) Margin held against existing LC & BG liability as on……..', value: '' },
   ];
-  const sec7Primary = bp?.section7PrimaryRows && bp.section7PrimaryRows.length > 0 ? bp.section7PrimaryRows : defaultSec7Primary;
+  const sec7Primary =
+    bp?.section7PrimaryRows && bp.section7PrimaryRows.length > 0 ? bp.section7PrimaryRows : defaultSec7Primary;
   const defaultSchedules = [
     'Schedule-01: Full Schedule with owner name as per Mortgage Deed.',
     'Schedule-02: Full Schedule with owner name as per Mortgage Deed.',
     'Schedule-03: Full Schedule with owner name as per Mortgage Deed.',
     'Schedule-04: Full Schedule with owner name as per Mortgage Deed.',
   ];
-  const schedules = bp?.section7CollateralSchedules && bp.section7CollateralSchedules.length > 0 ? bp.section7CollateralSchedules : defaultSchedules;
-  const defaultValRows = ['Schedule-01', 'Schedule-02', 'Schedule-03', 'Schedule-04', 'Building', 'Other', 'Grand Total'].map(
-    (s) => ({
-      schedule: s,
-      origBranchMv: '',
-      origBranchFsv: '',
-      origSurvMv: '',
-      origSurvFsv: '',
-      presBranchMv: '',
-      presBranchFsv: '',
-      presSurvMv: '',
-      presSurvFsv: '',
-      presAvMv: '',
-      presAvFsv: '',
-    })
-  );
-  const valRows = bp?.section7ValuationRows && bp.section7ValuationRows.length > 0 ? bp.section7ValuationRows : defaultValRows;
+  const schedules =
+    bp?.section7CollateralSchedules && bp.section7CollateralSchedules.length > 0
+      ? bp.section7CollateralSchedules
+      : defaultSchedules;
+
+  // Exact order in IC_Memo.pdf Page 3: Schedule-01, Schedule-03, Schedule-02, Schedule-04, Building, Other, Grand Total
+  const defaultValRows = [
+    'Schedule-01',
+    'Schedule-03',
+    'Schedule-02',
+    'Schedule-04',
+    'Building',
+    'Other',
+    'Grand Total',
+  ].map((s) => ({
+    schedule: s,
+    origBranchMv: '',
+    origBranchFsv: '',
+    origSurvMv: '',
+    origSurvFsv: '',
+    presBranchMv: '',
+    presBranchFsv: '',
+    presSurvMv: '',
+    presSurvFsv: '',
+    presAvMv: '',
+    presAvFsv: '',
+  }));
+  const valRows =
+    bp?.section7ValuationRows && bp.section7ValuationRows.length > 0 ? bp.section7ValuationRows : defaultValRows;
+
+  const sec7PrimCols = pctWidths([75, 25]);
+  const sec7ValCols = pctWidths([13, 8.7, 8.7, 8.7, 8.7, 8.7, 8.7, 8.7, 8.7, 8.7, 8.7]);
 
   body.push(
-    p([txt('7. Security:', { bold: true, underline: true })], { before: 70, after: 15 }),
-    p([
-      txt('a. Primary:', { bold: true, underline: true }),
-      ...(bp?.section7PrimaryNote ? [txt(` ${bp.section7PrimaryNote}`, { bold: true })] : []),
-    ], { indentLeft: 120 }),
+    p([txt('7. Security:', { bold: true, underline: true })], { before: 50, after: 15 }),
+    p(
+      [
+        txt('a. Primary:', { bold: true, underline: true }),
+        ...(bp?.section7PrimaryNote ? [txt(` ${bp.section7PrimaryNote}`, { bold: true })] : []),
+      ],
+      { indentLeft: 120, before: 15, after: 15 }
+    ),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec7PrimCols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Particulars', { bold: true, widthPct: 75 }),
-            simpleCell('Value', { bold: true, widthPct: 25, align: AlignmentType.CENTER }),
+            simpleCell('Particulars', { bold: true, widthTwips: sec7PrimCols[0], marginTB: 20 }),
+            simpleCell('Value', { bold: true, widthTwips: sec7PrimCols[1], align: AlignmentType.CENTER, marginTB: 20 }),
           ],
         }),
         ...sec7Primary.map(
           (r) =>
             new TableRow({
-              children: [simpleCell(r.particulars), simpleCell(r.value, { align: AlignmentType.CENTER })],
-            })
-        ),
-        new TableRow({
-          children: [
-            simpleCell('Total value of primary security', { bold: true, align: AlignmentType.CENTER }),
-            simpleCell(bp?.section7PrimaryTotal || '', { bold: true, align: AlignmentType.CENTER }),
-          ],
-        }),
-      ],
-    }),
-    p([
-      txt('b. Collateral:', { bold: true, underline: true }),
-      ...(bp?.section7CollateralNote ? [txt(` ${bp.section7CollateralNote}`, { bold: true })] : []),
-    ], { indentLeft: 120, before: 40 }),
-    ...schedules.map((s) => p([txt(s, { size: SZ_SMALL })], { indentLeft: 120 })),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({
-          children: [
-            simpleCell('Schedule', { bold: true, rowSpan: 3, widthPct: 14 }),
-            simpleCell('Value of the mortgaged properties as assessed', { bold: true, columnSpan: 10, align: AlignmentType.CENTER }),
-          ],
-        }),
-        new TableRow({
-          children: [
-            simpleCell('At the time of allowing investment', { bold: true, columnSpan: 4, align: AlignmentType.CENTER }),
-            simpleCell('At present', { bold: true, columnSpan: 6, align: AlignmentType.CENTER }),
-          ],
-        }),
-        new TableRow({
-          children: [
-            simpleCell('By Branch MV', { bold: true, size: 14 }),
-            simpleCell('By Branch FSV', { bold: true, size: 14 }),
-            simpleCell('Surveyor MV', { bold: true, size: 14 }),
-            simpleCell('Surveyor FSV', { bold: true, size: 14 }),
-            simpleCell('By Branch MV', { bold: true, size: 14 }),
-            simpleCell('By Branch FSV', { bold: true, size: 14 }),
-            simpleCell('Surveyor MV', { bold: true, size: 14 }),
-            simpleCell('Surveyor FSV', { bold: true, size: 14 }),
-            simpleCell('By AV Cell MV', { bold: true, size: 14 }),
-            simpleCell('By AV Cell FSV', { bold: true, size: 14 }),
-          ],
-        }),
-        ...valRows.map(
-          (r) =>
-            new TableRow({
+              cantSplit: true,
               children: [
-                simpleCell(r.schedule, { bold: /Grand/i.test(r.schedule) }),
-                simpleCell(r.origBranchMv),
-                simpleCell(r.origBranchFsv),
-                simpleCell(r.origSurvMv),
-                simpleCell(r.origSurvFsv),
-                simpleCell(r.presBranchMv),
-                simpleCell(r.presBranchFsv),
-                simpleCell(r.presSurvMv),
-                simpleCell(r.presSurvFsv),
-                simpleCell(r.presAvMv),
-                simpleCell(r.presAvFsv),
+                simpleCell(r.particulars, { widthTwips: sec7PrimCols[0], marginTB: 18 }),
+                simpleCell(r.value, { align: AlignmentType.CENTER, widthTwips: sec7PrimCols[1], marginTB: 18 }),
               ],
             })
         ),
         new TableRow({
+          cantSplit: true,
           children: [
-            simpleCell(`Outstanding to Lowest Security value Coverage (%): ${bp?.section7CoveragePct || '……………%'}`, {
+            simpleCell('Total value of primary security', {
               bold: true,
-              columnSpan: 11,
               align: AlignmentType.CENTER,
+              widthTwips: sec7PrimCols[0],
+              marginTB: 20,
+            }),
+            simpleCell(bp?.section7PrimaryTotal || '', {
+              bold: true,
+              align: AlignmentType.CENTER,
+              widthTwips: sec7PrimCols[1],
+              marginTB: 20,
             }),
           ],
         }),
       ],
     }),
-    p([txt('c. Others:', { bold: true })], { indentLeft: 120, before: 40 }),
-    p([txt('a. Usual Charge documents.', { bold: true })], { indentLeft: 260 }),
-    p([txt('b. Acceptance of Branch Sanction by the Client.', { bold: true })], { indentLeft: 260 })
+    p(
+      [
+        txt('b. Collateral:', { bold: true, underline: true }),
+        ...(bp?.section7CollateralNote ? [txt(` ${bp.section7CollateralNote}`, { bold: true })] : []),
+      ],
+      { indentLeft: 120, before: 35, after: 15 }
+    ),
+    ...schedules.map((s) => p([txt(s, { size: SZ_BODY })], { indentLeft: 120, before: 15, after: 15 })),
+    new Table({
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec7ValCols,
+      rows: [
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            simpleCell('Schedule', {
+              bold: true,
+              size: SZ_SMALL,
+              rowSpan: 4,
+              widthTwips: sec7ValCols[0],
+              vAlign: VerticalAlign.CENTER,
+              marginTB: 20,
+            }),
+            simpleCell('Value of the mortgaged properties as assessed', {
+              bold: true,
+              size: SZ_SMALL,
+              columnSpan: 10,
+              align: AlignmentType.CENTER,
+              marginTB: 20,
+            }),
+          ],
+        }),
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            simpleCell('At the time of allowing investment', {
+              bold: true,
+              size: SZ_SMALL,
+              columnSpan: 4,
+              align: AlignmentType.CENTER,
+              marginTB: 18,
+            }),
+            simpleCell('At present', {
+              bold: true,
+              size: SZ_SMALL,
+              columnSpan: 6,
+              align: AlignmentType.CENTER,
+              marginTB: 18,
+            }),
+          ],
+        }),
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            simpleCell('By Branch\non………..', { bold: true, size: SZ_SMALL, columnSpan: 2, align: AlignmentType.CENTER, marginTB: 16 }),
+            simpleCell('Surveyor\non……………..', { bold: true, size: SZ_SMALL, columnSpan: 2, align: AlignmentType.CENTER, marginTB: 16 }),
+            simpleCell('By Branch\non……………. ', { bold: true, size: SZ_SMALL, columnSpan: 2, align: AlignmentType.CENTER, marginTB: 16 }),
+            simpleCell('Surveyor\non………….', { bold: true, size: SZ_SMALL, columnSpan: 2, align: AlignmentType.CENTER, marginTB: 16 }),
+            simpleCell('By AV Cell\non……………', { bold: true, size: SZ_SMALL, columnSpan: 2, align: AlignmentType.CENTER, marginTB: 16 }),
+          ],
+        }),
+        new TableRow({
+          tableHeader: true,
+          cantSplit: true,
+          children: [
+            simpleCell('MV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[1], marginTB: 16 }),
+            simpleCell('FSV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[2], marginTB: 16 }),
+            simpleCell('MV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[3], marginTB: 16 }),
+            simpleCell('FSV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[4], marginTB: 16 }),
+            simpleCell('MV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[5], marginTB: 16 }),
+            simpleCell('FSV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[6], marginTB: 16 }),
+            simpleCell('MV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[7], marginTB: 16 }),
+            simpleCell('FSV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[8], marginTB: 16 }),
+            simpleCell('MV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[9], marginTB: 16 }),
+            simpleCell('FSV', { bold: true, size: SZ_SMALL, align: AlignmentType.CENTER, widthTwips: sec7ValCols[10], marginTB: 16 }),
+          ],
+        }),
+        ...valRows.map(
+          (r) =>
+            new TableRow({
+              cantSplit: true,
+              children: [
+                simpleCell(r.schedule, {
+                  size: SZ_SMALL,
+                  bold: /Grand/i.test(r.schedule),
+                  widthTwips: sec7ValCols[0],
+                  marginTB: 16,
+                }),
+                simpleCell(r.origBranchMv, { size: SZ_SMALL, widthTwips: sec7ValCols[1], marginTB: 16 }),
+                simpleCell(r.origBranchFsv, { size: SZ_SMALL, widthTwips: sec7ValCols[2], marginTB: 16 }),
+                simpleCell(r.origSurvMv, { size: SZ_SMALL, widthTwips: sec7ValCols[3], marginTB: 16 }),
+                simpleCell(r.origSurvFsv, { size: SZ_SMALL, widthTwips: sec7ValCols[4], marginTB: 16 }),
+                simpleCell(r.presBranchMv, { size: SZ_SMALL, widthTwips: sec7ValCols[5], marginTB: 16 }),
+                simpleCell(r.presBranchFsv, { size: SZ_SMALL, widthTwips: sec7ValCols[6], marginTB: 16 }),
+                simpleCell(r.presSurvMv, { size: SZ_SMALL, widthTwips: sec7ValCols[7], marginTB: 16 }),
+                simpleCell(r.presSurvFsv, { size: SZ_SMALL, widthTwips: sec7ValCols[8], marginTB: 16 }),
+                simpleCell(r.presAvMv, { size: SZ_SMALL, widthTwips: sec7ValCols[9], marginTB: 16 }),
+                simpleCell(r.presAvFsv, { size: SZ_SMALL, widthTwips: sec7ValCols[10], marginTB: 16 }),
+              ],
+            })
+        ),
+        new TableRow({
+          cantSplit: true,
+          children: [
+            simpleCell(
+              `Outstanding to Lowest Security value Coverage (%): ${bp?.section7CoveragePct || '……………..%'}`,
+              {
+                bold: true,
+                size: SZ_SMALL,
+                columnSpan: 11,
+                align: AlignmentType.CENTER,
+                widthTwips: BODY_WIDTH_TWIPS,
+                marginTB: 18,
+              }
+            ),
+          ],
+        }),
+      ],
+    }),
+    p([txt('c. Others:', { bold: true })], { indentLeft: 120, before: 35, after: 10 }),
+    p([txt('a. Usual Charge documents.', { bold: true })], { indentLeft: 320, before: 10, after: 10 }),
+    p([txt('b. Acceptance of Branch Sanction by the Client.', { bold: true })], { indentLeft: 320, before: 10, after: 15 })
   );
 
-  // Section 8 (Source of Repayment from Manual Inputs)
+  // Section 8 (Source of Repayment)
   body.push(
-    p([
-      txt('8. Source of Repayment: ', { bold: true, underline: true }),
-      txt(memo.sourceOfRepayment || ''),
-    ], { before: 60, after: 40 })
+    p(
+      [
+        txt('8. Source of Repayment: ', { bold: true, underline: true }),
+        txt(memo.sourceOfRepayment || ''),
+      ],
+      { before: 40, after: 30 }
+    )
   );
 
   // Section 9 (Sequence of Head Office Sanction(S))
-  const sec9Rows = bp?.section9Rows && bp.section9Rows.length > 0
-    ? bp.section9Rows
-    : ['a.', 'b.', 'c.', 'd.', 'e.', 'f.', 'g.'].map((sl) => ({
-        sl,
-        referenceNo: '',
-        date: '',
-        limit: '',
-        remarks: '',
-      }));
+  const sec9Rows =
+    bp?.section9Rows && bp.section9Rows.length > 0
+      ? bp.section9Rows
+      : ['a.', 'b.', 'c.', 'd.', 'e.', 'f.', 'g.'].map((sl) => ({
+          sl,
+          referenceNo: '',
+          date: '',
+          limit: '',
+          remarks: '',
+        }));
+  const sec9Cols = pctWidths([7, 36, 16, 15, 26]);
+
   body.push(
-    p([txt('9. Sequence of Head Office Sanction(S):', { bold: true, underline: true })], { before: 60, after: 20 }),
+    p([txt('9. Sequence of Head Office Sanction(S):', { bold: true, underline: true })], { before: 40, after: 20 }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec9Cols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('SL', { bold: true, widthPct: 8 }),
-            simpleCell('HO Sanction Reference No.', { bold: true, widthPct: 36 }),
-            simpleCell('Date', { bold: true, widthPct: 16 }),
-            simpleCell('Limit', { bold: true, widthPct: 14 }),
-            simpleCell('Remarks', { bold: true, widthPct: 26 }),
+            simpleCell('SL', { bold: true, widthTwips: sec9Cols[0], marginTB: 20 }),
+            simpleCell('HO Sanction Reference No.', { bold: true, widthTwips: sec9Cols[1], marginTB: 20 }),
+            simpleCell('Date', { bold: true, widthTwips: sec9Cols[2], marginTB: 20 }),
+            simpleCell('Limit', { bold: true, widthTwips: sec9Cols[3], marginTB: 20 }),
+            simpleCell('Remarks', { bold: true, widthTwips: sec9Cols[4], marginTB: 20 }),
           ],
         }),
         ...sec9Rows.map(
           (r) =>
             new TableRow({
+              cantSplit: true,
               children: [
-                simpleCell(r.sl),
-                simpleCell(r.referenceNo),
-                simpleCell(r.date),
-                simpleCell(r.limit),
-                simpleCell(r.remarks),
+                simpleCell(r.sl, { widthTwips: sec9Cols[0], marginTB: 18 }),
+                simpleCell(r.referenceNo, { widthTwips: sec9Cols[1], marginTB: 18 }),
+                simpleCell(r.date, { widthTwips: sec9Cols[2], marginTB: 18 }),
+                simpleCell(r.limit, { widthTwips: sec9Cols[3], marginTB: 18 }),
+                simpleCell(r.remarks, { widthTwips: sec9Cols[4], marginTB: 18 }),
               ],
             })
         ),
@@ -1028,83 +1469,206 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     })
   );
 
-  // Section 10 (Brief Particulars of The Client)
+  // Section 10 (Brief Particulars of The Client) — matching rowSpan=2 on g. and h. and superscript 1st
   const sp = bp?.section10Particulars;
-  const sec10Items: Array<[string, string, string]> = [
-    ['a.', 'Name of the Client', sp?.nameOfClient || ''],
-    ['b.', 'Unique Customer ID', sp?.uniqueCustomerId || ''],
-    ['c.', 'AWCD/MSD Account with opening date', sp?.awcdMsdAccount || ''],
-    ['d.', 'Business Type/Nature', sp?.businessTypeNature || ''],
-    ['e.', 'Business Management Type', sp?.businessManagementType || ''],
-    ['f.', 'Client Type', sp?.clientType || ''],
-    ['g.', 'Key Person with Phone No.', sp?.keyPersonPhone || ''],
-    ['', 'Address', sp?.address || ''],
-    ['h.', 'Office/Business Address', sp?.officeBusinessAddress || ''],
-    ['', 'Factory Address', sp?.factoryAddress || ''],
-    ['i.', 'Purpose of Investment', sp?.purposeOfInvestment || ''],
-    ['j.', 'Limit of Investment', sp?.limitOfInvestment || ''],
-    ['k.', 'Mode of Investment', sp?.modeOfInvestment || ''],
-    ['l.', 'Last Visit Date', sp?.lastVisitDate || ''],
-    ['m.', 'Stock Position', sp?.stockPosition || ''],
-    ['n.', 'Fixed Asset', sp?.fixedAsset || ''],
-    ['o.', 'Business Net Worth', sp?.businessNetWorth || ''],
-    ['p.', 'Insurance Coverage', sp?.insuranceCoverage || ''],
-    ['q.', 'Trade License & Validity', sp?.tradeLicenseValidity || ''],
-    ['r.', 'Other Regulatory Documents', sp?.otherRegulatoryDocuments || ''],
-    ['s.', 'Date of Original Investment', sp?.dateOfOriginalInvestment || ''],
-    ['t.', '1st Disbursement Manager', sp?.firstDisbursementManager || ''],
-    ['u.', 'First Date of Classification with Status', sp?.firstDateOfClassification || ''],
+  const sec10Cols = pctWidths([6, 37, 4, 53]);
+  const sec10Rows: TableRow[] = [
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('a.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        simpleCell('Name of the Client', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.nameOfClient || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('b.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        simpleCell('Unique Customer ID', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.uniqueCustomerId || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('c.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        simpleCell('AWCD/MSD Account with opening date', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.awcdMsdAccount || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('d.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        simpleCell('Business Type/Nature', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.businessTypeNature || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('e.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        simpleCell('Business Management Type', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.businessManagementType || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('f.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        simpleCell('Client Type', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.clientType || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    // g. spans 2 rows
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('g.', { rowSpan: 2, widthTwips: sec10Cols[0], vAlign: VerticalAlign.CENTER, marginTB: 16 }),
+        simpleCell('Key Person with Phone No.', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.keyPersonPhone || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('Address', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.address || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    // h. spans 2 rows
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('h.', { rowSpan: 2, widthTwips: sec10Cols[0], vAlign: VerticalAlign.CENTER, marginTB: 16 }),
+        simpleCell('Office/Business Address', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.officeBusinessAddress || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('Factory Address', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.factoryAddress || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    ...[
+      ['i.', 'Purpose of Investment', sp?.purposeOfInvestment || ''],
+      ['j.', 'Limit of Investment', sp?.limitOfInvestment || ''],
+      ['k.', 'Mode of Investment', sp?.modeOfInvestment || ''],
+      ['l.', 'Last Visit Date', sp?.lastVisitDate || ''],
+      ['m.', 'Stock Position', sp?.stockPosition || ''],
+      ['n.', 'Fixed Asset', sp?.fixedAsset || ''],
+      ['o.', 'Business Net Worth', sp?.businessNetWorth || ''],
+      ['p.', 'Insurance Coverage', sp?.insuranceCoverage || ''],
+      ['q.', 'Trade License & Validity', sp?.tradeLicenseValidity || ''],
+      ['r', 'Other Regulatory Documents', sp?.otherRegulatoryDocuments || ''],
+      ['s', 'Date of Original Investment', sp?.dateOfOriginalInvestment || ''],
+    ].map(
+      ([idx, label, val]) =>
+        new TableRow({
+          cantSplit: true,
+          children: [
+            simpleCell(idx, { widthTwips: sec10Cols[0], marginTB: 16 }),
+            simpleCell(label, { widthTwips: sec10Cols[1], marginTB: 16 }),
+            simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+            simpleCell(val, { widthTwips: sec10Cols[3], marginTB: 16 }),
+          ],
+        })
+    ),
+    // t. with superscript st
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('t.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        cell(
+          [
+            p(
+              [
+                txt('1', { size: SZ_BODY }),
+                txt('st', { size: SZ_BODY, superScript: true }),
+                txt(' Disbursement Manager', { size: SZ_BODY }),
+              ],
+              { before: 10, after: 10, line: 225 }
+            ),
+          ],
+          { widthTwips: sec10Cols[1], marginTB: 16 }
+        ),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.firstDisbursementManager || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
+    new TableRow({
+      cantSplit: true,
+      children: [
+        simpleCell('u.', { widthTwips: sec10Cols[0], marginTB: 16 }),
+        simpleCell('First Date of Classification with Status', { widthTwips: sec10Cols[1], marginTB: 16 }),
+        simpleCell(':', { widthTwips: sec10Cols[2], align: AlignmentType.CENTER, marginTB: 16 }),
+        simpleCell(sp?.firstDateOfClassification || '', { widthTwips: sec10Cols[3], marginTB: 16 }),
+      ],
+    }),
   ];
 
   body.push(
-    p([txt('10. Brief Particulars of The Client:', { bold: true, underline: true })], { before: 70, after: 20 }),
+    p([txt('10. Brief Particulars of The Client:', { bold: true, underline: true })], { before: 50, after: 20 }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: sec10Items.map(
-        ([idx, label, val]) =>
-          new TableRow({
-            children: [
-              simpleCell(idx, { widthPct: 6 }),
-              simpleCell(label, { widthPct: 36 }),
-              simpleCell(':', { widthPct: 4, align: AlignmentType.CENTER }),
-              simpleCell(val, { widthPct: 54 }),
-            ],
-          })
-      ),
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec10Cols,
+      rows: sec10Rows,
     })
   );
 
-  // Particulars of Proprietor/Partner/Directors
-  const dirRows = bp?.section10Directors && bp.section10Directors.length > 0
-    ? bp.section10Directors
-    : [{ name: '', age: '', education: '', designation: '', sharePct: '', experience: '', netWorth: '' }];
+  // Particulars of Proprietor/Partner/Directors (2 default rows matching IC_Memo.pdf)
+  const dirRows =
+    bp?.section10Directors && bp.section10Directors.length > 0
+      ? bp.section10Directors
+      : [
+          { name: '', age: '', education: '', designation: '', sharePct: '', experience: '', netWorth: '' },
+          { name: '', age: '', education: '', designation: '', sharePct: '', experience: '', netWorth: '' },
+        ];
+  const dirCols = pctWidths([22, 8, 15, 16, 12, 15, 12]);
   body.push(
-    p([txt('•  Particular of the Proprietor/Partner/Directors:', { bold: true, underline: true })], { before: 50, after: 20 }),
+    p([txt('•  Particular of the Proprietor/Partner/Directors:', { bold: true, underline: true })], { before: 45, after: 20 }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: dirCols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Name of the Directors', { bold: true, widthPct: 24 }),
-            simpleCell('Age', { bold: true, widthPct: 8 }),
-            simpleCell('Education', { bold: true, widthPct: 14 }),
-            simpleCell('Designation', { bold: true, widthPct: 16 }),
-            simpleCell('Share (%)', { bold: true, widthPct: 12 }),
-            simpleCell('Experience', { bold: true, widthPct: 14 }),
-            simpleCell('Net worth', { bold: true, widthPct: 12 }),
+            simpleCell('Name of the Directors', { bold: true, widthTwips: dirCols[0], marginTB: 20 }),
+            simpleCell('Age', { bold: true, widthTwips: dirCols[1], marginTB: 20 }),
+            simpleCell('Education', { bold: true, widthTwips: dirCols[2], marginTB: 20 }),
+            simpleCell('Designation', { bold: true, widthTwips: dirCols[3], marginTB: 20 }),
+            simpleCell('Share (%)', { bold: true, widthTwips: dirCols[4], marginTB: 20 }),
+            simpleCell('Experience', { bold: true, widthTwips: dirCols[5], marginTB: 20 }),
+            simpleCell('Net worth', { bold: true, widthTwips: dirCols[6], marginTB: 20 }),
           ],
         }),
         ...dirRows.map(
           (d) =>
             new TableRow({
+              cantSplit: true,
               children: [
-                simpleCell(d.name),
-                simpleCell(d.age),
-                simpleCell(d.education),
-                simpleCell(d.designation),
-                simpleCell(d.sharePct),
-                simpleCell(d.experience),
-                simpleCell(d.netWorth),
+                simpleCell(d.name, { widthTwips: dirCols[0], marginTB: 35 }),
+                simpleCell(d.age, { widthTwips: dirCols[1], marginTB: 35 }),
+                simpleCell(d.education, { widthTwips: dirCols[2], marginTB: 35 }),
+                simpleCell(d.designation, { widthTwips: dirCols[3], marginTB: 35 }),
+                simpleCell(d.sharePct, { widthTwips: dirCols[4], marginTB: 35 }),
+                simpleCell(d.experience, { widthTwips: dirCols[5], marginTB: 35 }),
+                simpleCell(d.netWorth, { widthTwips: dirCols[6], marginTB: 35 }),
               ],
             })
         ),
@@ -1112,39 +1676,46 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     })
   );
 
-  // Remarks: Director of any Bank/FI/Insurance
-  const bankDirRows = bp?.section10BankDirectors && bp.section10BankDirectors.length > 0
-    ? bp.section10BankDirectors
-    : [
-        { name: '', bankNbfi: '', designation: '', sharePct: '', numShares: '' },
-        { name: '', bankNbfi: '', designation: '', sharePct: '', numShares: '' },
-      ];
+  // Remarks: Director of any Bank/FI/Insurance (3 default rows matching IC_Memo.pdf Page 4)
+  const bankDirRows =
+    bp?.section10BankDirectors && bp.section10BankDirectors.length > 0
+      ? bp.section10BankDirectors
+      : [
+          { name: '', bankNbfi: '', designation: '', sharePct: '', numShares: '' },
+          { name: '', bankNbfi: '', designation: '', sharePct: '', numShares: '' },
+          { name: '', bankNbfi: '', designation: '', sharePct: '', numShares: '' },
+        ];
+  const bankDirCols = pctWidths([22, 22, 18, 19, 19]);
   body.push(
     p([txt('•  Remarks: Director of any Bank/ FI/ Insurance company:', { bold: true, underline: true })], {
-      before: 50,
+      before: 45,
       after: 20,
     }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: bankDirCols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Name of the Director', { bold: true, widthPct: 24 }),
-            simpleCell('Name of the bank/NBFIs', { bold: true, widthPct: 24 }),
-            simpleCell('Designation/Position', { bold: true, widthPct: 18 }),
-            simpleCell('Percentage of Shares', { bold: true, widthPct: 17 }),
-            simpleCell('Number of Shares', { bold: true, widthPct: 17 }),
+            simpleCell('Name of the Director', { bold: true, widthTwips: bankDirCols[0], marginTB: 20 }),
+            simpleCell('Name of the bank/NBFIs', { bold: true, widthTwips: bankDirCols[1], marginTB: 20 }),
+            simpleCell('Designation/Position', { bold: true, widthTwips: bankDirCols[2], marginTB: 20 }),
+            simpleCell('Percentage of Shares', { bold: true, widthTwips: bankDirCols[3], marginTB: 20 }),
+            simpleCell('Number of Shares', { bold: true, widthTwips: bankDirCols[4], marginTB: 20 }),
           ],
         }),
         ...bankDirRows.map(
           (d) =>
             new TableRow({
+              cantSplit: true,
               children: [
-                simpleCell(d.name),
-                simpleCell(d.bankNbfi),
-                simpleCell(d.designation),
-                simpleCell(d.sharePct),
-                simpleCell(d.numShares),
+                simpleCell(d.name, { widthTwips: bankDirCols[0], marginTB: 35 }),
+                simpleCell(d.bankNbfi, { widthTwips: bankDirCols[1], marginTB: 35 }),
+                simpleCell(d.designation, { widthTwips: bankDirCols[2], marginTB: 35 }),
+                simpleCell(d.sharePct, { widthTwips: bankDirCols[3], marginTB: 35 }),
+                simpleCell(d.numShares, { widthTwips: bankDirCols[4], marginTB: 35 }),
               ],
             })
         ),
@@ -1152,39 +1723,62 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     })
   );
 
-  // Section 11 (Financials of The Client)
-  const finRows = bp?.section11Rows && bp.section11Rows.length > 0
-    ? bp.section11Rows
-    : [
-        { year: '', grossSales: bp?.section11FinancialsNote || '', grossProfit: '', netProfit: '', totalAsset: '', totalLiabilities: '', netWorth: '' },
-      ];
+  // Section 11 (Financials of The Client — 2 default rows matching IC_Memo.pdf Page 4)
+  const finRows =
+    bp?.section11Rows && bp.section11Rows.length > 0
+      ? bp.section11Rows
+      : [
+          {
+            year: '',
+            grossSales: bp?.section11FinancialsNote || '',
+            grossProfit: '',
+            netProfit: '',
+            totalAsset: '',
+            totalLiabilities: '',
+            netWorth: '',
+          },
+          {
+            year: '',
+            grossSales: '',
+            grossProfit: '',
+            netProfit: '',
+            totalAsset: '',
+            totalLiabilities: '',
+            netWorth: '',
+          },
+        ];
+  const finCols = pctWidths([10, 15, 15, 15, 15, 15, 15]);
   body.push(
-    p([txt('11. Financials of The Client:', { bold: true, underline: true })], { before: 70, after: 20 }),
+    p([txt('11. Financials of The Client:', { bold: true, underline: true })], { before: 50, after: 20 }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: finCols,
       rows: [
         new TableRow({
+          tableHeader: true,
+          cantSplit: true,
           children: [
-            simpleCell('Year', { bold: true, widthPct: 10 }),
-            simpleCell('Gross Sales', { bold: true, widthPct: 15 }),
-            simpleCell('Gross Profit', { bold: true, widthPct: 15 }),
-            simpleCell('Net Profit', { bold: true, widthPct: 15 }),
-            simpleCell('Total Asset', { bold: true, widthPct: 15 }),
-            simpleCell('Total liabilities', { bold: true, widthPct: 15 }),
-            simpleCell('Net Worth', { bold: true, widthPct: 15 }),
+            simpleCell('Year', { bold: true, widthTwips: finCols[0], marginTB: 20 }),
+            simpleCell('Gross Sales', { bold: true, widthTwips: finCols[1], marginTB: 20 }),
+            simpleCell('Gross Profit', { bold: true, widthTwips: finCols[2], marginTB: 20 }),
+            simpleCell('Net Profit', { bold: true, widthTwips: finCols[3], marginTB: 20 }),
+            simpleCell('Total Asset', { bold: true, widthTwips: finCols[4], marginTB: 20 }),
+            simpleCell('Total liabilities', { bold: true, widthTwips: finCols[5], marginTB: 20 }),
+            simpleCell('Net Worth', { bold: true, widthTwips: finCols[6], marginTB: 20 }),
           ],
         }),
         ...finRows.map(
           (r) =>
             new TableRow({
+              cantSplit: true,
               children: [
-                simpleCell(r.year),
-                simpleCell(r.grossSales),
-                simpleCell(r.grossProfit),
-                simpleCell(r.netProfit),
-                simpleCell(r.totalAsset),
-                simpleCell(r.totalLiabilities),
-                simpleCell(r.netWorth),
+                simpleCell(r.year, { widthTwips: finCols[0], marginTB: 35 }),
+                simpleCell(r.grossSales, { widthTwips: finCols[1], marginTB: 35 }),
+                simpleCell(r.grossProfit, { widthTwips: finCols[2], marginTB: 35 }),
+                simpleCell(r.netProfit, { widthTwips: finCols[3], marginTB: 35 }),
+                simpleCell(r.totalAsset, { widthTwips: finCols[4], marginTB: 35 }),
+                simpleCell(r.totalLiabilities, { widthTwips: finCols[5], marginTB: 35 }),
+                simpleCell(r.netWorth, { widthTwips: finCols[6], marginTB: 35 }),
               ],
             })
         ),
@@ -1194,39 +1788,49 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
 
   // Section 12 (Branch Visit Report)
   body.push(
-    p([
-      txt('12. Branch Visit Report: ', { bold: true, underline: true }),
-      txt(memo.branchVisitReport || ''),
-    ], { before: 70, after: 30 })
+    p(
+      [
+        txt('12. Branch Visit Report: ', { bold: true, underline: true }),
+        txt(memo.branchVisitReport || ''),
+      ],
+      { before: 50, after: 25 }
+    )
   );
 
   // Section 13 (Recommendation of The Branch)
   body.push(
-    p([
-      txt('13. Recommendation of The Branch: ', { bold: true, underline: true }),
-      txt(`The Branch Recommended the following vide Proposal Ref: ${v('#64#')} dated ${v('#65#')}`),
-    ], { before: 50, after: 30 })
+    p(
+      [
+        txt('13. Recommendation of The Branch: ', { bold: true, underline: true }),
+        txt(`The Branch Recommended the following vide Proposal Ref: ${v('#64#')} dated ${v('#65#')}`),
+      ],
+      { before: 35, after: 25 }
+    )
   );
 
   // Section 14
   body.push(
-    p([
-      txt('14. Recommendation of Internal Control & Compliance Division: ', { bold: true, underline: true }),
-      txt('N/A', { bold: true }),
-    ], { before: 50, after: 30 })
+    p(
+      [
+        txt('14. Recommendation of Internal Control & Compliance Division: ', { bold: true, underline: true }),
+        txt('N/A', { bold: true }),
+      ],
+      { before: 35, after: 25 }
+    )
   );
 
   // Section 15 (Observation and Recommendation of SAMD)
   body.push(
-    p([txt('15. Observation and Recommendation of SAMD:', { bold: true, underline: true })], { before: 50, after: 20 })
+    p([txt('15. Observation and Recommendation of SAMD:', { bold: true, underline: true })], { before: 35, after: 15 })
   );
   if (memo.samdObservation) {
     for (const line of memo.samdObservation.split('\n').filter((l) => l.trim())) {
-      body.push(p([txt(line.trim())], { indentLeft: 180 }));
+      body.push(p([txt(line.trim())], { indentLeft: 180, before: 15, after: 15 }));
     }
   }
 
   // Section 16 (Particulars of the facility)
+  const sec16Cols = pctWidths([5, 24, 71]);
   const sec16Rows: Array<[string, string, string, boolean]> = [
     ['a.', 'Facility', 'EXIT with Waiver under BRPD 1 Circular Letter No. 23 dated 29.06.2026', true],
     ['b.', 'Outstanding', `Tk. ${v('#25#')} million as on ${v('#68#')}.`, true],
@@ -1238,16 +1842,18 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     ['h.', 'Repayment Method', 'Lump sum.', false],
   ];
   body.push(
-    p([txt('16. Particulars of the facility:', { bold: true, underline: true })], { before: 60, after: 20 }),
+    p([txt('16. Particulars of the facility:', { bold: true, underline: true })], { before: 45, after: 15 }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sec16Cols,
       rows: sec16Rows.map(
         ([sl, label, val, isBold]) =>
           new TableRow({
+            cantSplit: true,
             children: [
-              simpleCell(sl, { widthPct: 5 }),
-              simpleCell(label, { widthPct: 24 }),
-              simpleCell(val, { bold: isBold, widthPct: 71 }),
+              simpleCell(sl, { widthTwips: sec16Cols[0], marginTB: 18 }),
+              simpleCell(label, { widthTwips: sec16Cols[1], marginTB: 18 }),
+              simpleCell(val, { bold: isBold, widthTwips: sec16Cols[2], marginTB: 18 }),
             ],
           })
       ),
@@ -1256,56 +1862,101 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
 
   // Section 17 (Special Term(s) & Condition(s))
   const terms: Array<[string, string, boolean]> = [
-    ['i.', 'The waiver of profit shall be adjusted from FAD, Head Office from the provision amount kept (if any) and the rest amount shall be adjusted by branch gradually after adjustment of the settlement amount within the approved time frame.', false],
-    ['ii.', 'The final settlement amount will be determined at the date of execution of settlement considering up to date liability position.', false],
-    ['iii.', 'The Branch must ensure adjustment of all other direct and indirect liabilities of the client before allowing the final redemption of the mortgaged collateral security(s).', false],
-    ['iv.', 'The Branch must ensure adjustment of all non-funded liabilities (L/C, Bank Guarantee, Credit Card etc.) before allowing final redemption of the mortgaged collateral security(s). The Branch must also ensure that any encashable security (Margin for Bank Guarantee, L/C, MTDR, Scheme deposit in the name of the client) including collateral is properly mentioned in the proposal. If any encashable security (Margin for Bank Guarantee, L/C, MTDR, Scheme deposit in the name of the client) is found not mentioned in the proposal and later encashed in favor of the client, the Manager will be held responsible.', false],
-    ['v.', 'If the client fails to repay or fails to adjust the liability within the given time or fails to pay installments regularly, all facilities shall be cancelled and legal action shall be initiated by the Branch.', false],
-    ['vi.', 'Branch should be utmost sincere to protect bank interest in the course of execution partial redemption.', false],
-    ['vii.', 'Branch is advised to follow the guidelines of Bangladesh Bank BRPD circular No. 06/22, Circular Letter No.18/22, 46/22 and subsequent up-dates as well as all instruction circular(s) of SIBL.', false],
-    ['viii.', 'The Profit rate of the stipulated investment shall not be changed or reduced to 0.00% until full and final adjustment of the Investment, as approved by Head Office.', true],
-    ['ix.', 'All the legal expenses and other charges (if any) already incurred and to be incurred in connection with the withdrawal of case/suits and others issues shall be borne by the client.', false],
+    [
+      'i.',
+      'The waiver of profit shall be adjusted from FAD, Head Office from the provision amount kept (if any) and the rest amount shall be adjusted by branch gradually after adjustment of the settlement amount within the approved time frame.',
+      false,
+    ],
+    [
+      'ii.',
+      'The final settlement amount will be determined at the date of execution of settlement considering up to date liability position.',
+      false,
+    ],
+    [
+      'iii.',
+      'The Branch must ensure adjustment of all other direct and indirect liabilities of the client before allowing the final redemption of the mortgaged collateral security(s).',
+      false,
+    ],
+    [
+      'iv.',
+      'The Branch must ensure adjustment of all non-funded liabilities (L/C, Bank Guarantee, Credit Card etc.) before allowing final redemption of the mortgaged collateral security(s). The Branch must also ensure that any encashable security (Margin for Bank Guarantee, L/C, MTDR, Scheme deposit in the name of the client) including collateral is properly mentioned in the proposal. If any encashable security (Margin for Bank Guarantee, L/C, MTDR, Scheme deposit in the name of the client) is found not mentioned in the proposal and later encashed in favor of the client, the Manager will be held responsible.',
+      false,
+    ],
+    [
+      'v.',
+      'If the client fails to repay or fails to adjust the liability within the given time or fails to pay installments regularly, all facilities shall be cancelled and legal action shall be initiated by the Branch.',
+      false,
+    ],
+    [
+      'vi.',
+      'Branch should be utmost sincere to protect bank interest in the course of execution partial redemption.',
+      false,
+    ],
+    [
+      'vii.',
+      'Branch is advised to follow the guidelines of Bangladesh Bank BRPD circular No. 06/22, Circular Letter No.18/22, 46/22 and subsequent up-dates as well as all instruction circular(s) of SIBL.',
+      false,
+    ],
+    [
+      'viii.',
+      'The Profit rate of the stipulated investment shall not be changed or reduced to 0.00% until full and final adjustment of the Investment, as approved by Head Office.',
+      true,
+    ],
+    [
+      'ix.',
+      'All the legal expenses and other charges (if any) already incurred and to be incurred in connection with the withdrawal of case/suits and others issues shall be borne by the client.',
+      false,
+    ],
   ];
 
   body.push(
-    p([txt('17. Special Term(s) & Condition(s):', { bold: true, underline: true })], { before: 70, after: 20 }),
-    p([txt('If the proposal approved, the branch is advised to comply the following special terms and conditions:')], {
-      indentLeft: 180,
-    }),
+    p([txt('17. Special Term(s) & Condition(s):', { bold: true, underline: true })], { before: 50, after: 15 }),
+    p(
+      [txt('If the proposal approved, the branch is advised to comply the following special terms and conditions:')],
+      { indentLeft: 280, before: 15, after: 20 }
+    ),
     ...terms.map(([num, clause, isBold]) =>
       p([txt(`${num}  `, { bold: isBold }), txt(clause, { bold: isBold })], {
-        indentLeft: 360,
+        indentLeft: 520,
         before: 25,
         after: 25,
+        line: 260,
       })
     )
   );
 
   // Closing box and Signatories
+  const sigCols = pctWidths([50, 50]);
   body.push(
-    p([], { before: 60, after: 60 }),
+    p([], { before: 50, after: 30 }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: [BODY_WIDTH_TWIPS],
       rows: [
         new TableRow({
+          cantSplit: true,
           children: [
             simpleCell('The proposal is hereby placed before the Investment Committee for kind recommendation.', {
               bold: true,
               align: AlignmentType.CENTER,
               size: SZ_BODY,
+              widthTwips: BODY_WIDTH_TWIPS,
               borders: ALL_THIN_BORDERS,
+              marginTB: 35,
             }),
           ],
         }),
       ],
     }),
-    p([txt('Union Bank PLC Unit', { bold: true })], { before: 70, after: 10 }),
-    p([txt('Special Asset Management Division', { bold: true })], { before: 0, after: 60 }),
-    p([txt('Submitted for kind decision.', { bold: true })], { align: AlignmentType.CENTER, before: 40, after: 120 }),
+    p([txt('Union Bank PLC Unit', { bold: true })], { before: 60, after: 10 }),
+    p([txt('Special Asset Management Division', { bold: true })], { before: 0, after: 50 }),
+    p([txt('Submitted for kind decision.', { bold: true })], { align: AlignmentType.CENTER, before: 40, after: 100 }),
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
+      columnWidths: sigCols,
       rows: [
         new TableRow({
+          cantSplit: true,
           children: [
             cell(
               [
@@ -1313,7 +1964,7 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
                 p([txt('Deputy Managing Director & CRO')], { before: 0, after: 10 }),
                 p([txt('Sammilito Islami Bank PLC.')], { before: 0, after: 10 }),
               ],
-              { widthPct: 50, borders: ALL_NO_BORDERS }
+              { widthTwips: sigCols[0], borders: ALL_NO_BORDERS }
             ),
             cell(
               [
@@ -1321,13 +1972,13 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
                 p([txt('Additional Managing Director & COO')], { before: 0, after: 10 }),
                 p([txt('Sammilito Islami Bank PLC.')], { before: 0, after: 10 }),
               ],
-              { widthPct: 50, borders: ALL_NO_BORDERS }
+              { widthTwips: sigCols[1], borders: ALL_NO_BORDERS }
             ),
           ],
         }),
       ],
     }),
-    p([txt('(Abedur Rahman Sikder)', { bold: true })], { align: AlignmentType.CENTER, before: 260, after: 10 }),
+    p([txt('(Abedur Rahman Sikder)', { bold: true })], { align: AlignmentType.CENTER, before: 240, after: 10 }),
     p([txt('Managing Director')], { align: AlignmentType.CENTER, before: 0, after: 10 }),
     p([txt('Sammilito Islami Bank PLC.')], { align: AlignmentType.CENTER, before: 0, after: 10 }),
     p([txt('(Transferee of the assets and liabilities of')], { align: AlignmentType.CENTER, before: 0, after: 10 }),
@@ -1340,13 +1991,17 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
       {
         properties: {
           page: {
+            size: {
+              width: A4_WIDTH_TWIPS,
+              height: A4_HEIGHT_TWIPS,
+            },
             margin: {
-              top: 1500,
-              bottom: 720,
-              left: 820,
-              right: 820,
-              header: 360,
-              footer: 360,
+              top: 1520,
+              bottom: 680,
+              left: MARGIN_LR_TWIPS,
+              right: MARGIN_LR_TWIPS,
+              header: 300,
+              footer: 280,
             },
           },
         },

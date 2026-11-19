@@ -50,23 +50,28 @@ async function startServer() {
       let userPrompt = '';
 
       if (section === 'justification') {
-        userPrompt = `Scrutinize the Branch Proposal and the IC Memo data below, and write exactly 3 main justification lines for placeholder #51# under "Justification of The Proposed Facility".
-Format as 3 concise, formal banking lines separated by newlines (e.g., "1. ...", "2. ...", "3. ..."), covering: (1) client's current business/financial position and genuine distress without willful default, (2) recovery & settlement math (down payment / principal / cost of fund coverage), and (3) reduction of classified/NPL exposure and protection of bank interest.
-Keep each line crisp (1-2 sentences). Do NOT use markdown bolding or asterisks.
+        userPrompt = `Scrutinize the IC Memo data (placeholders, settlement/waiver figures, Cost of Fund, security, classification, source of repayment) and all relevant details of the Branch Proposal below, and write exactly 3 key and relevant justification points for placeholder #51# under "Justification of The Proposed Facility".
+Format as exactly 3 numbered justification points separated by newlines ("1. ...", "2. ...", "3. ..."), covering: (1) client's current business/financial position and genuine distress without willful default, (2) recovery & settlement math (down payment / principal / cost of fund coverage & protection of bank interest), and (3) immediate reduction of classified/NPL exposure and avoidance of prolonged litigation.
+Keep each point crisp, factual, and substantive (1-2 sentences each). Do NOT use markdown bolding or asterisks.
 
 Context:
 ${JSON.stringify(context, null, 2)}`;
       } else if (section === 'branchVisit') {
-        userPrompt = `Scrutinize the Branch Proposal Section 12 (Branch Visit Report) and client particulars below, and write Section 12 "Branch Visit Report" for the Head Office IC Memo.
-CRITICAL REQUIREMENT: Refer to the Branch in the THIRD PERSON (e.g., "The officials of Patiya Branch...", "Branch management visited...", never "we" or "our branch").
-Include the visiting officials' names/designations if available, visit date, client name, premises inspected, and physical business findings accurately. Write 1 concise, formal paragraph. Do NOT use markdown bolding or asterisks.
+        userPrompt = `Scrutinize all relevant sections of the Branch Proposal (including Section 12 Branch Visit Report, Section 10 Client Particulars, office/factory addresses, last visit date, stock position, fixed assets, business net worth, Section 7 security details, Section 11 financials, and Section 13/15/16 branch recommendations) and the IC Memo client particulars below, and write a comprehensive Section 12 "Branch Visit Report" for the Head Office IC Memo.
+CRITICAL REQUIREMENT: Write from the perspective of the branch while strictly treating the branch in the THIRD PERSON (e.g., "The officials of [Branch Name] Branch...", "Branch management conducted an inspection...", "The Branch observed that...", never use "we", "us", "our", or "our branch").
+Include the visiting officials' names/designations if available, visit date, client/concern name, premises/factory/collateral inspected, physical stock/asset & operational business findings, client interaction, and branch verification outcome accurately. Write 1 to 2 comprehensive, formal banking paragraphs. Do NOT use markdown bolding or asterisks.
 
 Context:
 ${JSON.stringify(context, null, 2)}`;
       } else if (section === 'samdObservation') {
-        userPrompt = `Scrutinize the IC Memo figures (Principal, Charges, Cost of Fund, Surplus/Deficit, Down Payment, Waiver, Settlement Amount, CIB & Classification status) and the Branch Proposal below, and write Section 15 "Observation and Recommendation of SAMD".
-Write exactly 3 main observation/recommendation lines separated by newlines (e.g., "1. ...", "2. ...", "3. ..."), addressing: (1) verification of outstanding liability, classification status, and absence of collateral/legal impediments, (2) Cost of Fund & waiver adequacy analysis (confirming recovery covers principal and cost of fund / BRPD Circular compliance), and (3) SAMD's formal recommendation to place before the Investment Committee for exit with waiver within the stipulated settlement period.
-Do NOT use markdown bolding or asterisks.
+        userPrompt = `Thoroughly scrutinize the IC Memo figures and sections (Principal, Charges, Charged Profit, Compensation, Uncharged Compensation, NET Outstanding, Cost of Fund Surplus/Deficit, Maximum Waiver Considering COF #44#, Down Payment, Proposed Waiver, Settlement/Exit Amount, Settlement Period, CIB & Classification status, Legal Action status, Audit/Regulatory status, Security MV/FSV, Source of Repayment, Branch Visit Report) and the relevant details of the Branch Proposal below, and write Section 15 "Observation and Recommendation of SAMD".
+Write exactly five (5) key and substantive justification points separated by newlines ("1. ...", "2. ...", "3. ...", "4. ...", "5. ...") reflecting SAMD's observations and recommendations, addressing:
+1. Verification of total outstanding liability breakup, classification/overdue/CIB status, and confirmation of absence of fraud, forgery, or willful default.
+2. Assessment of primary & collateral security valuation (MV/FSV coverage), legal action status, and audit/regulatory compliance position.
+3. Cost of Fund & waiver adequacy analysis (confirming down payment, recovery covering principal/charges/Cost of Fund, maximum permissible waiver considering COF, and conformity with BRPD Circular Letter No. 23 dated 29.06.2026).
+4. Evaluation of client's genuine business/financial condition, branch visit & branch recommendation findings, and viability of the proposed source of repayment within the settlement deadline.
+5. Formal SAMD recommendation to place the Exit with Waiver proposal before the Investment Committee for exit within the stipulated settlement period subject to compliance with special terms and conditions.
+Each point should be 1-2 substantive, formal banking sentences. Do NOT use markdown bolding or asterisks.
 
 Context:
 ${JSON.stringify(context, null, 2)}`;

@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
-import { Download, Loader2, Sparkles } from 'lucide-react';
-import type { AiSectionsData, ResolvedICMemo } from '../types/memo';
+import React, { useEffect, useState } from 'react';
+import { Download, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import type {
+  AiSectionsData,
+  MemoDocType,
+  MemoTemplateRecord,
+  ResolvedICMemo,
+} from '../types/memo';
+import { TemplateManagerPanel } from './TemplateManagerPanel';
 import { ValidationPanel } from './ValidationPanel';
 
 interface ICMemoPreviewProps {
@@ -14,6 +20,12 @@ interface ICMemoPreviewProps {
   aiError: string | null;
   onDownloadDocx: () => Promise<void>;
   downloading: boolean;
+  templates: Record<MemoDocType, MemoTemplateRecord | null>;
+  onUploadTemplate: (docType: MemoDocType, file: File) => Promise<void>;
+  onRemoveTemplate: (docType: MemoDocType) => Promise<void>;
+  onApplyAllChanges: () => void;
+  hasPendingChanges: boolean;
+  applySignal: number;
 }
 
 const Token: React.FC<{ ph: Record<string, string>; code: string; bold?: boolean }> = ({
@@ -44,6 +56,12 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
   aiError,
   onDownloadDocx,
   downloading,
+  templates,
+  onUploadTemplate,
+  onRemoveTemplate,
+  onApplyAllChanges,
+  hasPendingChanges,
+  applySignal,
 }) => {
   const ph = memo.placeholders;
   const bp = memo.branchProposal;
@@ -51,6 +69,14 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
   const [editingJustification, setEditingJustification] = useState(false);
   const [editingBranchVisit, setEditingBranchVisit] = useState(false);
   const [editingSamd, setEditingSamd] = useState(false);
+
+  useEffect(() => {
+    if (applySignal > 0) {
+      setEditingJustification(false);
+      setEditingBranchVisit(false);
+      setEditingSamd(false);
+    }
+  }, [applySignal]);
 
   const defaultCibStatuses = [
     'STD',
@@ -189,20 +215,43 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onDownloadDocx}
-          disabled={downloading}
-          className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
-        >
-          {downloading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Download className="w-4 h-4" />
-          )}
-          <span>{downloading ? 'Building .docx...' : 'Download .docx'}</span>
-        </button>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            type="button"
+            onClick={onApplyAllChanges}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+              hasPendingChanges
+                ? 'text-amber-950 bg-amber-100 hover:bg-amber-200 border-amber-300'
+                : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+            }`}
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Apply All Changes</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onDownloadDocx}
+            disabled={downloading}
+            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+          >
+            {downloading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>{downloading ? 'Building .docx...' : 'Download .docx'}</span>
+          </button>
+        </div>
       </div>
+
+      {/* Default Format Template Control for IC Memo */}
+      <TemplateManagerPanel
+        templates={templates}
+        onUploadTemplate={onUploadTemplate}
+        onRemoveTemplate={onRemoveTemplate}
+        singleDocType="ic"
+      />
 
       {aiError && (
         <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg px-4 py-3 text-sm">
@@ -1259,7 +1308,7 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             </div>
             {editingBranchVisit ? (
               <textarea
-                rows={3}
+                rows={5}
                 value={aiSections.branchVisit ?? ''}
                 onChange={(e) => onUpdateAiSection('branchVisit', e.target.value)}
                 className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
@@ -1284,7 +1333,7 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             N/A
           </p>
 
-          {/* Section 15 (AI Generate: 3 observation/recommendation lines) */}
+          {/* Section 15 (AI Generate: 5 observation/recommendation points) */}
           <div className="space-y-1 text-[10pt]">
             <div className="flex items-center justify-between gap-3">
               <p className="font-bold underline">15. Observation and Recommendation of SAMD:</p>
@@ -1315,7 +1364,7 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             </div>
             {editingSamd ? (
               <textarea
-                rows={4}
+                rows={7}
                 value={aiSections.samdObservation ?? ''}
                 onChange={(e) => onUpdateAiSection('samdObservation', e.target.value)}
                 className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"

@@ -7,6 +7,7 @@ import {
   FileUp,
   FolderOpen,
   Loader2,
+  RefreshCw,
   RotateCcw,
   X,
 } from 'lucide-react';
@@ -16,8 +17,11 @@ import type {
   DocumentUploadMeta,
   ExtractedDocumentsState,
   ManualInputsData,
+  MemoDocType,
+  MemoTemplateRecord,
   ResolvedICMemo,
 } from '../types/memo';
+import { TemplateManagerPanel } from './TemplateManagerPanel';
 import { ValidationPanel } from './ValidationPanel';
 
 interface ManualInputsTabProps {
@@ -35,6 +39,11 @@ interface ManualInputsTabProps {
   loadingSamples: boolean;
   batchProgress: { active: boolean; total: number; completed: number };
   onGoToICMemo: () => void;
+  templates: Record<MemoDocType, MemoTemplateRecord | null>;
+  onUploadTemplate: (docType: MemoDocType, file: File) => Promise<void>;
+  onRemoveTemplate: (docType: MemoDocType) => Promise<void>;
+  onApplyAllChanges: () => void;
+  hasPendingChanges: boolean;
 }
 
 const DOC_ORDER: DocumentKey[] = [
@@ -61,6 +70,11 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
   loadingSamples,
   batchProgress,
   onGoToICMemo,
+  templates,
+  onUploadTemplate,
+  onRemoveTemplate,
+  onApplyAllChanges,
+  hasPendingChanges,
 }) => {
   const [showAllFields, setShowAllFields] = useState(true);
   const [searchFilter, setSearchFilter] = useState('');
@@ -122,6 +136,19 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
               <FolderOpen className="w-4 h-4" />
             )}
             <span>{loadingSamples ? 'Parsing Samples...' : 'Load Attached Sample Case'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onApplyAllChanges}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+              hasPendingChanges
+                ? 'text-amber-950 bg-amber-100 hover:bg-amber-200 border-amber-300'
+                : 'text-slate-700 bg-white hover:bg-slate-100 border-slate-300'
+            }`}
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Apply All Changes</span>
           </button>
 
           <button
@@ -419,6 +446,13 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
           />
         </div>
       </div>
+
+      {/* Default Format Templates Upload Panel (IC Memo, MEC Memo, Board Memo, Sanction) */}
+      <TemplateManagerPanel
+        templates={templates}
+        onUploadTemplate={onUploadTemplate}
+        onRemoveTemplate={onRemoveTemplate}
+      />
 
       {/* Review & Correct All Extracted Placeholders Table */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">

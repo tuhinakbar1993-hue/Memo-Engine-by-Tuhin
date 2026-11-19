@@ -273,3 +273,28 @@ export interface MemoEngineDefinition {
   status: 'implemented' | 'coming_soon';
   description: string;
 }
+
+export type MemoDocType = Exclude<MemoTabKey, 'manual'>;
+
+export interface TemplatePreviewBlock {
+  type: 'paragraph' | 'table';
+  text?: string;
+  rows?: string[][];
+}
+
+export interface MemoTemplateRecord {
+  docType: MemoDocType;
+  fileName: string;
+  fileSize: number;
+  uploadedAt: string;
+  bytes: Uint8Array;
+  detectedTokens: string[];
+  previewSections: TemplatePreviewBlock[];
+}
+
+export interface AppliedSyncState {
+  appliedAt: string | null;
+  version: number;
+  memo: ResolvedICMemo;
+}
+

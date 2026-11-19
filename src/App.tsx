@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { ComingSoonMemoTab } from './components/ComingSoonMemoTab';
 import { ICMemoPreview } from './components/ICMemoPreview';
 import { LandingScreen } from './components/LandingScreen';
 import { ManualInputsTab } from './components/ManualInputsTab';
 import { resolveICMemo } from './engines/icMemoEngine';
 import { MEMO_ENGINES } from './engines/memoRegistry';
+import { inspectDocxTemplate, populateDocxTemplate } from './exporters/docxTemplateEngine';
 import { generateICMemoDocxBlob } from './exporters/icMemoDocx';
 import {
   detectDocumentKeyFromFile,
@@ -18,12 +20,20 @@ import {
 } from './parsers/documentParsers';
 import type {
   AiSectionsData,
+  AppliedSyncState,
   DocumentKey,
   DocumentUploadMeta,
   ExtractedDocumentsState,
   ManualInputsData,
+  MemoDocType,
   MemoTabKey,
+  MemoTemplateRecord,
 } from './types/memo';
+import {
+  deleteTemplateRecord,
+  loadAllTemplateRecords,
+  saveTemplateRecord,
+} from './utils/templateStorage';
 
 const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   branchProposal: {
@@ -132,6 +142,22 @@ const TABS: Array<{ id: MemoTabKey; label: string }> = [
   { id: 'sanction', label: 'Sanction' },
 ];
 
+const MANUAL_FIELD_TO_CODE: Partial<Record<keyof ManualInputsData, string>> = {
+  proposalDate: '#1#',
+  waiverAmount: '#4#',
+  settlementAmount: '#27#',
+  settlementPeriod: '#28#',
+  waiverRecClientBranch: '#45#',
+  waiverRecHO: '#47#',
+};
+
+const DOC_FILE_PREFIX: Record<MemoDocType, string> = {
+  ic: 'IC_Memo',
+  mec: 'MEC_Memo',
+  board: 'Board_Memo',
+  sanction: 'Sanction',
+};
+
 export default function App() {
   const [entered, setEntered] = useState(false);
   const [activeTab, setActiveTab] = useState<MemoTabKey>('manual');
@@ -141,6 +167,13 @@ export default function App() {
   const [manualInputs, setManualInputs] = useState<ManualInputsData>(INITIAL_MANUAL_INPUTS);
   const [aiSections, setAiSections] = useState<AiSectionsData>(INITIAL_AI_SECTIONS);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
+
+  const [templates, setTemplates] = useState<Record<MemoDocType, MemoTemplateRecord | null>>({
+    ic: null,
+    mec: null,
+    board: null,
+    sanction: null,
+  });
 
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{
@@ -158,6 +191,27 @@ export default function App() {
     () => resolveICMemo(extractedDocs, manualInputs, aiSections, overrides),
     [extractedDocs, manualInputs, aiSections, overrides]
   );
+
+  const [appliedSnapshot, setAppliedSnapshot] = useState<AppliedSyncState>(() => ({
+    appliedAt: null,
+    version: 0,
+    memo: resolveICMemo(INITIAL_EXTRACTED_DOCS, INITIAL_MANUAL_INPUTS, INITIAL_AI_SECTIONS, {}),
+  }));
+  const [hasPendingChanges, setHasPendingChanges] = useState(false);
+  const [applySignal, setApplySignal] = useState(0);
+  const [applyNotice, setApplyNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadAllTemplateRecords().then((loaded) => {
+      setTemplates(loaded);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!applyNotice) return;
+    const timer = window.setTimeout(() => setApplyNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [applyNotice]);
 
   const updateDocStage = (key: DocumentKey, stage: string) => {
     setDocMetas((prev) => ({
@@ -218,6 +272,7 @@ export default function App() {
           fileName: file.name,
         },
       }));
+      setHasPendingChanges(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to parse document.';
       setDocMetas((prev) => ({
@@ -298,14 +353,26 @@ export default function App() {
 
   const handleManualChange = (field: keyof ManualInputsData, value: string) => {
     setManualInputs((prev) => ({ ...prev, [field]: value }));
+    const mappedCode = MANUAL_FIELD_TO_CODE[field];
+    if (mappedCode) {
+      setOverrides((prev) => {
+        if (prev[mappedCode] === undefined) return prev;
+        const next = { ...prev };
+        delete next[mappedCode];
+        return next;
+      });
+    }
+    setHasPendingChanges(true);
   };
 
   const handleOverrideChange = (code: string, value: string) => {
     setOverrides((prev) => ({ ...prev, [code]: value }));
+    setHasPendingChanges(true);
   };
 
   const handleResetOverrides = () => {
     setOverrides({});
+    setHasPendingChanges(true);
   };
 
   const handleGenerateAiSection = async (
@@ -318,6 +385,16 @@ export default function App() {
       const context = {
         placeholders: resolvedICMemo.placeholders,
         sourceOfRepayment: resolvedICMemo.sourceOfRepayment,
+        branchVisitReport: resolvedICMemo.branchVisitReport,
+        justificationLines: resolvedICMemo.justificationLines,
+        extractedSummaries: {
+          outstanding: extractedDocs.outstanding,
+          partyPerformance: extractedDocs.partyPerformance,
+          overdue: extractedDocs.overdue,
+          accountStatement: extractedDocs.accountStatement,
+          cibReport: extractedDocs.cibReport,
+          costOfFund: extractedDocs.costOfFund,
+        },
         branchProposal: extractedDocs.branchProposal,
       };
 
@@ -337,6 +414,15 @@ export default function App() {
         ...prev,
         [section]: data.text ?? '',
       }));
+      if (section === 'justification') {
+        setOverrides((prev) => {
+          if (prev['#51#'] === undefined) return prev;
+          const next = { ...prev };
+          delete next['#51#'];
+          return next;
+        });
+      }
+      setHasPendingChanges(true);
     } catch (err) {
       setAiError(err instanceof Error ? err.message : 'Failed to generate section.');
     } finally {
@@ -349,18 +435,64 @@ export default function App() {
     value: string | null
   ) => {
     setAiSections((prev) => ({ ...prev, [section]: value }));
+    if (section === 'justification') {
+      setOverrides((prev) => {
+        if (prev['#51#'] === undefined) return prev;
+        const next = { ...prev };
+        delete next['#51#'];
+        return next;
+      });
+    }
+    setHasPendingChanges(true);
   };
 
-  const handleDownloadICDocx = async () => {
+  const handleUploadTemplate = async (docType: MemoDocType, file: File) => {
+    const record = await inspectDocxTemplate(file, docType);
+    setTemplates((prev) => ({ ...prev, [docType]: record }));
+    await saveTemplateRecord(record);
+    setHasPendingChanges(true);
+  };
+
+  const handleRemoveTemplate = async (docType: MemoDocType) => {
+    setTemplates((prev) => ({ ...prev, [docType]: null }));
+    await deleteTemplateRecord(docType);
+    setHasPendingChanges(true);
+  };
+
+  const handleApplyAllChanges = () => {
+    const syncedMemo = resolveICMemo(extractedDocs, manualInputs, aiSections, overrides);
+    const nowStr = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    setApplySignal((s) => s + 1);
+    setAppliedSnapshot((prev) => ({
+      appliedAt: nowStr,
+      version: prev.version + 1,
+      memo: syncedMemo,
+    }));
+    setHasPendingChanges(false);
+    setApplyNotice(
+      `All changes applied at ${nowStr} — IC Memo, MEC Memo, Board Memo, and Sanction outputs synchronized.`
+    );
+  };
+
+  const handleDownloadDocx = async (docType: MemoDocType = 'ic') => {
     setDownloading(true);
     try {
-      const blob = await generateICMemoDocxBlob(resolvedICMemo);
-      const acct = resolvedICMemo.placeholders['#2#'] || 'Draft';
+      const syncedMemo = resolveICMemo(extractedDocs, manualInputs, aiSections, overrides);
+      const activeTemplate = templates[docType];
+      const blob = activeTemplate
+        ? await populateDocxTemplate(activeTemplate.bytes, syncedMemo, docType)
+        : await generateICMemoDocxBlob(syncedMemo);
+
+      const acct = syncedMemo.placeholders['#2#'] || 'Draft';
       const safeName = acct.replace(/[^A-Za-z0-9_-]/g, '_');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `IC_Memo_${safeName}.docx`;
+      link.download = `${DOC_FILE_PREFIX[docType]}_${safeName}.docx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -416,12 +548,26 @@ export default function App() {
             })}
           </nav>
 
-          {/* Zone 3: Primary Action */}
-          <div className="hidden sm:flex items-center shrink-0">
-            {activeTab === 'ic' ? (
+          {/* Zone 3: Primary Actions */}
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleApplyAllChanges}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                hasPendingChanges
+                  ? 'text-amber-950 bg-amber-100 hover:bg-amber-200 border-amber-300'
+                  : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+              }`}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Apply All Changes</span>
+            </button>
+
+            {activeTab === 'ic' ||
+            (activeTab !== 'manual' && templates[activeTab as MemoDocType] !== null) ? (
               <button
                 type="button"
-                onClick={handleDownloadICDocx}
+                onClick={() => void handleDownloadDocx(activeTab as MemoDocType)}
                 disabled={downloading}
                 className="px-4 py-2 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
               >
@@ -438,6 +584,15 @@ export default function App() {
             )}
           </div>
         </div>
+
+        {applyNotice && (
+          <div className="bg-emerald-50 border-t border-emerald-200 px-4 sm:px-6 py-2">
+            <div className="max-w-7xl mx-auto flex items-center gap-2 text-xs font-medium text-emerald-900">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>{applyNotice}</span>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Active Tab Content */}
@@ -458,6 +613,11 @@ export default function App() {
             loadingSamples={loadingSamples}
             batchProgress={batchProgress}
             onGoToICMemo={() => setActiveTab('ic')}
+            templates={templates}
+            onUploadTemplate={handleUploadTemplate}
+            onRemoveTemplate={handleRemoveTemplate}
+            onApplyAllChanges={handleApplyAllChanges}
+            hasPendingChanges={hasPendingChanges}
           />
         )}
 
@@ -471,8 +631,14 @@ export default function App() {
             onUpdateAiSection={handleUpdateAiSection}
             generatingSection={generatingSection}
             aiError={aiError}
-            onDownloadDocx={handleDownloadICDocx}
+            onDownloadDocx={() => handleDownloadDocx('ic')}
             downloading={downloading}
+            templates={templates}
+            onUploadTemplate={handleUploadTemplate}
+            onRemoveTemplate={handleRemoveTemplate}
+            onApplyAllChanges={handleApplyAllChanges}
+            hasPendingChanges={hasPendingChanges}
+            applySignal={applySignal}
           />
         )}
 
@@ -482,6 +648,15 @@ export default function App() {
             accountNo={resolvedICMemo.placeholders['#2#']}
             branchName={resolvedICMemo.placeholders['#3#']}
             proposalDate={resolvedICMemo.placeholders['#1#']}
+            memo={resolvedICMemo}
+            templates={templates}
+            onUploadTemplate={handleUploadTemplate}
+            onRemoveTemplate={handleRemoveTemplate}
+            onDownloadDocx={handleDownloadDocx}
+            downloading={downloading}
+            onApplyAllChanges={handleApplyAllChanges}
+            hasPendingChanges={hasPendingChanges}
+            lastAppliedAt={appliedSnapshot.appliedAt}
           />
         )}
 
@@ -491,6 +666,15 @@ export default function App() {
             accountNo={resolvedICMemo.placeholders['#2#']}
             branchName={resolvedICMemo.placeholders['#3#']}
             proposalDate={resolvedICMemo.placeholders['#1#']}
+            memo={resolvedICMemo}
+            templates={templates}
+            onUploadTemplate={handleUploadTemplate}
+            onRemoveTemplate={handleRemoveTemplate}
+            onDownloadDocx={handleDownloadDocx}
+            downloading={downloading}
+            onApplyAllChanges={handleApplyAllChanges}
+            hasPendingChanges={hasPendingChanges}
+            lastAppliedAt={appliedSnapshot.appliedAt}
           />
         )}
 
@@ -500,6 +684,15 @@ export default function App() {
             accountNo={resolvedICMemo.placeholders['#2#']}
             branchName={resolvedICMemo.placeholders['#3#']}
             proposalDate={resolvedICMemo.placeholders['#1#']}
+            memo={resolvedICMemo}
+            templates={templates}
+            onUploadTemplate={handleUploadTemplate}
+            onRemoveTemplate={handleRemoveTemplate}
+            onDownloadDocx={handleDownloadDocx}
+            downloading={downloading}
+            onApplyAllChanges={handleApplyAllChanges}
+            hasPendingChanges={hasPendingChanges}
+            lastAppliedAt={appliedSnapshot.appliedAt}
           />
         )}
       </main>

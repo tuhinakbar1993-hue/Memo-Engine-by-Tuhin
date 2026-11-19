@@ -738,8 +738,13 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
   body.push(
     p([txt('Justification of The Proposed Facility:', { bold: true, underline: true })], { before: 45, after: 15 })
   );
-  if (justLines.length > 0) {
-    body.push(p([txt('a. ', { bold: true }), txt(justLines.join(' '))], { indentLeft: 120, before: 15, after: 15 }));
+  if (justLines.length > 1) {
+    body.push(p([txt('a. ', { bold: true }), txt(justLines[0])], { indentLeft: 120, before: 15, after: 10 }));
+    for (let idx = 1; idx < justLines.length; idx++) {
+      body.push(p([txt(justLines[idx])], { indentLeft: 280, before: 10, after: 10 }));
+    }
+  } else if (justLines.length === 1) {
+    body.push(p([txt('a. ', { bold: true }), txt(justLines[0])], { indentLeft: 120, before: 15, after: 15 }));
   } else {
     body.push(p([txt(`a. ${v('#51#')}`)], { indentLeft: 120, before: 15, after: 15 }));
   }

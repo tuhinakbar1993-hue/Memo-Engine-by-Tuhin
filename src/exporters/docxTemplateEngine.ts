@@ -194,7 +194,7 @@ function setParagraphTextPreservingStyle(
     rEl.appendChild(rPrTemplate);
   }
 
-  const lines = newText.split('\n');
+  const lines = newText.replace(/\r\n/g, '\n').split('\n');
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) {
       rEl.appendChild(xmlDoc.createElementNS(W_NS, 'w:br'));
@@ -287,7 +287,7 @@ function setParagraphValueAfterColon(
     rEl.appendChild(cleanRPr);
   }
 
-  const lines = newValue.split('\n');
+  const lines = newValue.replace(/\r\n/g, '\n').split('\n');
   const needsSpace = tail.length === 0;
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) {
@@ -471,7 +471,7 @@ function cellReplacedAnyToken(
 }
 
 function isSectionBoundaryText(text: string): boolean {
-  const t = text.trim();
+  const t = text.replace(/\s+/g, ' ').trim();
   if (!t) return false;
   if (
     /^(?:Justification\s+of\s+(?:the\s+)?Proposed\s+Facility|Previous\s+Board\s+Decision|Subject\s*:|Key\s+Points\s*:|Note\s*:\s*Information\s+Regarding\s+Down)/i.test(
@@ -481,6 +481,13 @@ function isSectionBoundaryText(text: string): boolean {
     return true;
   }
   if (/^(?:1[0-7]|[1-9])\s*[.)]\s*[A-Za-z]/.test(t)) return true;
+  if (
+    /^(?:Nature\s+of\s+Business|Liability\s+Position\s+of|Liability\s+of\s+the\s+Client|CIB\s+Status|Legal\s+Action\s+Status|Audit,\s*Compliance|Security\s*:|Source\s+of\s+Repayment|Sequence\s+of\s+Head\s+Office|Brief\s+Particulars\s+of\s+The\s+Client|Financials\s+of\s+The\s+Client|Branch\s+Visit\s+Report|Recommendation\s+of\s+(?:the\s+)?Branch|Branch\s+Recommendation|Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)|Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?|Particulars\s+of\s+(?:the\s+)?(?:Proposed\s+)?Facility|Special\s+Term\(s\))/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
   if (/^(?:[bc]\.\s*(?:Investment\s+was\s+not\s+created|The\s+client\s+is\s+not\s+a\s+willful)|c\.\s*Others\s*:?)/i.test(t)) {
     return true;
   }
@@ -605,7 +612,7 @@ function populateSubParagraphLines(
 
 /**
  * Populates a narrative heading paragraph that may either hold its value inline after ":"
- * OR place its body in sub-paragraph slot(s) below the heading (or adjacent table cell).
+ * OR place its body in sub-paragraph slot(s) below the heading (or adjacent/next-row table cell).
  */
 function populateNarrativeHeading(
   xmlDoc: Document,
@@ -618,23 +625,53 @@ function populateNarrativeHeading(
   const existingTail = colonIdx !== -1 ? fullText.slice(colonIdx + 1).trim() : '';
   const subParas = collectContiguousSubParagraphs(pEl);
   const lines = valueText
+    .replace(/\r\n/g, '\n')
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
   if (lines.length === 0) return;
 
-  // Check if pEl sits in a 2+ cell table row as [Label Cell, Value Cell]
+  const nonEmptySubParas = subParas.filter((sp) => getParagraphPlainText(sp).trim() !== '');
+
+  // Check if pEl sits in a 2+ cell table row as [Label Cell, (":" Cell), Value Cell]
   const tcParent = pEl.parentElement?.localName === 'tc' ? pEl.parentElement : null;
   const trParent = tcParent?.parentElement?.localName === 'tr' ? tcParent.parentElement : null;
   if (tcParent && trParent) {
     const rowCells = directChildren(trParent, 'tc');
     const tcIdx = rowCells.indexOf(tcParent);
-    if (rowCells.length >= 2 && tcIdx !== -1 && tcIdx < rowCells.length - 1 && !existingTail && subParas.length === 0) {
-      const nextCell = rowCells[tcIdx + 1];
+    if (
+      rowCells.length >= 2 &&
+      tcIdx !== -1 &&
+      tcIdx < rowCells.length - 1 &&
+      !existingTail &&
+      nonEmptySubParas.length === 0
+    ) {
+      let valIdx = tcIdx + 1;
+      if (getCellPlainText(rowCells[valIdx]).trim() === ':' && valIdx + 1 < rowCells.length) {
+        valIdx += 1;
+      }
+      const nextCell = rowCells[valIdx];
       const nextText = getCellPlainText(nextCell).trim();
-      if (!isSectionBoundaryText(nextText)) {
+      if (nextText !== ':' && !isSectionBoundaryText(nextText)) {
         setCellTextPreservingFormat(xmlDoc, nextCell, lines.join('\n'));
         return;
+      }
+    }
+
+    // Also support 2-row box layout: [Row r: Heading in 1 cell] followed by [Row r+1: empty single cell]
+    const tblParent = trParent.parentElement?.localName === 'tbl' ? trParent.parentElement : null;
+    if (tblParent && rowCells.length === 1 && !existingTail && nonEmptySubParas.length === 0) {
+      const tblRows = directChildren(tblParent, 'tr');
+      const trIdx = tblRows.indexOf(trParent);
+      if (trIdx !== -1 && trIdx + 1 < tblRows.length) {
+        const nextRowCells = directChildren(tblRows[trIdx + 1], 'tc');
+        if (nextRowCells.length === 1) {
+          const nextRowText = getCellPlainText(nextRowCells[0]).trim();
+          if (nextRowText === '') {
+            setCellTextPreservingFormat(xmlDoc, nextRowCells[0], lines.join('\n'));
+            return;
+          }
+        }
       }
     }
   }
@@ -646,20 +683,21 @@ function populateNarrativeHeading(
     (!existingTail || preferSubParagraphs || lines.length > 1)
   ) {
     if (existingTail && !preferSubParagraphs) {
-      // Inline text had value and sub-paras are stale blanks/notes -> replace inline and clear stale sub-paras
-      setParagraphValueAfterColon(xmlDoc, pEl, lines.join('\n'));
-      for (const sp of subParas) {
-        sp.parentNode?.removeChild(sp);
+      if (setParagraphValueAfterColon(xmlDoc, pEl, lines.join('\n'))) {
+        for (const sp of subParas) {
+          sp.parentNode?.removeChild(sp);
+        }
+        return;
       }
-      return;
     }
     populateSubParagraphLines(xmlDoc, pEl, subParas, lines, '120');
     return;
   }
 
   if (colonIdx !== -1 && !preferSubParagraphs) {
-    setParagraphValueAfterColon(xmlDoc, pEl, lines.join('\n'));
-    return;
+    if (setParagraphValueAfterColon(xmlDoc, pEl, lines.join('\n'))) {
+      return;
+    }
   }
 
   populateSubParagraphLines(xmlDoc, pEl, subParas, lines, '120');
@@ -745,12 +783,14 @@ function applyStructuralPopulations(
   const allParas = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'p'));
   for (let i = 0; i < allParas.length; i++) {
     const pEl = allParas[i];
+    if (!pEl.parentNode) continue;
     const text = getParagraphPlainText(pEl).trim();
-    if (!text) continue;
+    const normText = text.replace(/\s+/g, ' ').trim();
+    if (!normText) continue;
 
     // 1. Nature of Business:
     if (
-      /^(?:1\.\s*)?Nature of Business\s*:?/i.test(text) &&
+      /^(?:1\.\s*)?Nature\s+of\s+Business\s*:?/i.test(normText) &&
       nonEmpty(ph['#54#']) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, ['#54#', '#natureOfBusiness#', '{{natureOfBusiness}}', '[natureOfBusiness]'])
     ) {
@@ -766,13 +806,13 @@ function applyStructuralPopulations(
 
     // 2. Liability Position ... as on ...:
     if (
-      /^(?:2\.\s*)?Liability Position.*as on\b/i.test(text) &&
+      /^(?:2\.\s*)?Liability\s+Position.*as\s+on\b/i.test(normText) &&
       nonEmpty(ph['#68#']) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, ['#68#', '#osDate#', '#printDate#', '{{osDate}}'])
     ) {
-      const m = text.match(/as on\s+([^:]+):?/i);
+      const m = text.match(/as\s+on\s+([^:]+):?/i);
       if (m) {
-        const start = text.indexOf(m[1], text.toLowerCase().indexOf('as on'));
+        const start = text.indexOf(m[1], text.toLowerCase().search(/as\s+on/));
         if (start !== -1) {
           replaceSpanInParagraph(xmlDoc, pEl, start, start + m[1].length, ph['#68#']);
         }
@@ -782,11 +822,11 @@ function applyStructuralPopulations(
 
     // 4. CIB Status: Report dated ... shows:
     if (
-      /^(?:4\.\s*)?CIB Status\s*:/i.test(text) &&
+      /^(?:4\.\s*)?CIB\s+Status\s*:/i.test(normText) &&
       nonEmpty(ph['#62#']) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, ['#62#', '#cibDate#', '{{cibDate}}'])
     ) {
-      const m = text.match(/Report dated\s+(.+?)\s+shows/i);
+      const m = text.match(/Report\s+dated\s+(.+?)\s+shows/i);
       if (m) {
         const start = text.indexOf(m[1]);
         if (start !== -1) {
@@ -797,7 +837,7 @@ function applyStructuralPopulations(
     }
 
     // 5. Legal Action Status header note
-    if (/^(?:5\.\s*)?Legal Action Status[^:]*:/i.test(text) && bp?.section5StatusNote !== undefined) {
+    if (/^(?:5\.\s*)?Legal\s+Action\s+Status[^:]*:/i.test(normText) && bp?.section5StatusNote !== undefined) {
       if (nonEmpty(bp.section5StatusNote)) {
         setParagraphValueAfterColon(xmlDoc, pEl, bp.section5StatusNote);
       }
@@ -805,7 +845,7 @@ function applyStructuralPopulations(
     }
 
     // 6. Audit, Compliance header note
-    if (/^(?:6\.\s*)?Audit,\s*Compliance[^:]*:/i.test(text) && bp?.section6StatusNote !== undefined) {
+    if (/^(?:6\.\s*)?Audit,\s*Compliance[^:]*:/i.test(normText) && bp?.section6StatusNote !== undefined) {
       if (nonEmpty(bp.section6StatusNote)) {
         setParagraphValueAfterColon(xmlDoc, pEl, bp.section6StatusNote);
       }
@@ -813,11 +853,11 @@ function applyStructuralPopulations(
     }
 
     // 7a / 7b / 7c Notes & Collateral Schedules
-    if (/^a\.\s*Primary\s*:/i.test(text) && nonEmpty(bp?.section7PrimaryNote)) {
+    if (/^a\.\s*Primary\s*:/i.test(normText) && nonEmpty(bp?.section7PrimaryNote)) {
       setParagraphValueAfterColon(xmlDoc, pEl, bp!.section7PrimaryNote);
       continue;
     }
-    if (/^b\.\s*Collateral\s*:/i.test(text)) {
+    if (/^b\.\s*Collateral\s*:/i.test(normText)) {
       if (nonEmpty(bp?.section7CollateralNote)) {
         setParagraphValueAfterColon(xmlDoc, pEl, bp!.section7CollateralNote);
       }
@@ -836,9 +876,10 @@ function applyStructuralPopulations(
       }
       continue;
     }
-    if (/^c\.\s*Others\s*:?/i.test(text) && nonEmpty(memo.sec7OthersNote)) {
+    if (/^c\.\s*Others\s*:?/i.test(normText) && nonEmpty(memo.sec7OthersNote)) {
       const subParas = collectContiguousSubParagraphs(pEl);
       const customLines = memo.sec7OthersNote
+        .replace(/\r\n/g, '\n')
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
@@ -856,7 +897,7 @@ function applyStructuralPopulations(
 
     // 8. Source of Repayment:
     if (
-      /^(?:8\.\s*)?Source of Repayment\s*:?/i.test(text) &&
+      /^(?:8\.\s*)?Source\s+of\s+Repayment\s*:?/i.test(normText) &&
       nonEmpty(memo.sourceOfRepayment) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, [
         '#sourceOfRepayment#',
@@ -871,7 +912,7 @@ function applyStructuralPopulations(
 
     // 12. Branch Visit Report:
     if (
-      /^(?:12\.\s*)?Branch Visit Report\s*:?/i.test(text) &&
+      /^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report\s*:?/i.test(normText) &&
       nonEmpty(memo.branchVisitReport) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, [
         '#branchVisit#',
@@ -887,7 +928,7 @@ function applyStructuralPopulations(
     }
 
     // 13. Recommendation of The Branch:
-    if (/^(?:13\.\s*)?Recommendation of (?:the )?Branch\b/i.test(text)) {
+    if (/^(?:13\.\s*)?Recommendation\s+of\s+(?:the\s+)?Branch\b/i.test(normText)) {
       // Update Proposal Ref & Date if present in heading line and not already tokenized
       let updated = text;
       if (
@@ -919,6 +960,7 @@ function applyStructuralPopulations(
         ])
       ) {
         const recLines = memo.sec13BranchRecommendation
+          .replace(/\r\n/g, '\n')
           .split('\n')
           .map((l) => l.trim())
           .filter(Boolean);
@@ -933,7 +975,7 @@ function applyStructuralPopulations(
         );
         if (!hasTokenSub && recLines.length > 0) {
           // If heading has "The Branch Recommended the following...", keep heading intact and populate sub-paragraphs below
-          if (/The Branch Recommended/i.test(text) || subParas.length > 0) {
+          if (/The\s+Branch\s+Recommended/i.test(normText) || subParas.length > 0) {
             populateSubParagraphLines(xmlDoc, pEl, subParas, recLines, '180');
           } else {
             populateNarrativeHeading(xmlDoc, pEl, recLines.join('\n'), false);
@@ -945,7 +987,7 @@ function applyStructuralPopulations(
 
     // 14. Recommendation of Internal Control & Compliance Division / ICCD:
     if (
-      /^(?:14\.\s*)?Recommendation of (?:Internal Control|IC\s*&?\s*CD|ICCD)\b/i.test(text) &&
+      /^(?:14\.\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)\b/i.test(normText) &&
       nonEmpty(memo.sec14IccdRecommendation) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, [
         '#iccdRecommendation#',
@@ -960,13 +1002,13 @@ function applyStructuralPopulations(
 
     // Subject: ... waiver of Tk. ...
     if (
-      /^Subject\s*:/i.test(text) &&
+      /^Subject\s*:/i.test(normText) &&
       nonEmpty(ph['#4#']) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, ['#4#', '#waiverAmount#', '#waiver#'])
     ) {
-      const m = text.match(/waiver of Tk\.?\s*([^\s,]+(?:\s*million)?)/i);
+      const m = text.match(/waiver\s+of\s+Tk\.?\s*([^\s,]+(?:\s*million)?)/i);
       if (m) {
-        const start = text.indexOf(m[1], text.toLowerCase().indexOf('waiver of tk'));
+        const start = text.indexOf(m[1], text.toLowerCase().search(/waiver\s+of\s+tk/));
         if (start !== -1) {
           replaceSpanInParagraph(xmlDoc, pEl, start, start + m[1].length, ph['#4#']);
         }
@@ -975,8 +1017,9 @@ function applyStructuralPopulations(
     }
 
     // Justification of The Proposed Facility:
-    if (/^(?:\d+\.\s*)?Justification of (?:the )?Proposed Facility\s*:?/i.test(text) && nonEmpty(memo.justificationLines)) {
+    if (/^(?:\d+\.\s*)?Justification\s+of\s+(?:the\s+)?Proposed\s+Facility\s*:?/i.test(normText) && nonEmpty(memo.justificationLines)) {
       const cleanLines = memo.justificationLines
+        .replace(/\r\n/g, '\n')
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
@@ -1021,12 +1064,13 @@ function applyStructuralPopulations(
 
     // 15. Observation and Recommendation of SAMD:
     if (
-      /^(?:15\.\s*)?(?:Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD|SAMD\s*Observation(?:\s*(?:and|&)\s*Recommendation)?)\s*:?/i.test(
-        text
+      /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\s*:?/i.test(
+        normText
       ) &&
       nonEmpty(memo.samdObservation)
     ) {
       const obsLines = memo.samdObservation
+        .replace(/\r\n/g, '\n')
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
@@ -1037,12 +1081,29 @@ function applyStructuralPopulations(
           paraReplacedAnyOf(replacedTokensMap, sp, ['#samdObservation#', '#samd#', '{{samdObservation}}'])
         );
       if (!alreadyTokenized && obsLines.length > 0) {
-        // Clear any stale inline text after colon if SAMD points live in sub-paragraphs
-        const colonIdx = text.indexOf(':');
-        if (colonIdx !== -1 && text.slice(colonIdx + 1).trim().length > 0) {
-          setParagraphValueAfterColon(xmlDoc, pEl, '');
+        const tcParent = pEl.parentElement?.localName === 'tc' ? pEl.parentElement : null;
+        const trParent = tcParent?.parentElement?.localName === 'tr' ? tcParent.parentElement : null;
+        const tblParent = trParent?.parentElement?.localName === 'tbl' ? trParent.parentElement : null;
+        const rowCells = trParent ? directChildren(trParent, 'tc') : [];
+        const isTwoRowBox =
+          Boolean(tblParent && trParent && rowCells.length === 1) &&
+          (() => {
+            const tblRows = directChildren(tblParent!, 'tr');
+            const trIdx = tblRows.indexOf(trParent!);
+            if (trIdx === -1 || trIdx + 1 >= tblRows.length) return false;
+            const nextCells = directChildren(tblRows[trIdx + 1], 'tc');
+            return nextCells.length === 1 && getCellPlainText(nextCells[0]).trim() === '';
+          })();
+        if (rowCells.length >= 2 || isTwoRowBox) {
+          populateNarrativeHeading(xmlDoc, pEl, obsLines.join('\n'), true);
+        } else {
+          // Clear any stale inline text after colon if SAMD points live in sub-paragraphs
+          const colonIdx = text.indexOf(':');
+          if (colonIdx !== -1 && text.slice(colonIdx + 1).trim().length > 0) {
+            setParagraphValueAfterColon(xmlDoc, pEl, '');
+          }
+          populateSubParagraphLines(xmlDoc, pEl, subParas, obsLines, '180');
         }
-        populateSubParagraphLines(xmlDoc, pEl, subParas, obsLines, '180');
       }
       continue;
     }
@@ -1586,16 +1647,80 @@ function applyStructuralPopulations(
       else if (/^(Proposed\s*Waiver|Waiver\s*Amount)$/i.test(label)) trySet(nonEmpty(ph['#4#']));
       else if (/^(Settlement\s*Amount|Exit\s*Amount)$/i.test(label)) trySet(nonEmpty(ph['#27#']));
       else if (/^(Settlement\s*Period|Settlement\s*Deadline)$/i.test(label)) trySet(nonEmpty(ph['#28#']));
-      else if (/^(?:8\.\s*)?Source of Repayment$/i.test(label)) trySet(nonEmpty(memo.sourceOfRepayment));
-      else if (/^(?:12\.\s*)?Branch Visit Report$/i.test(label)) trySet(nonEmpty(memo.branchVisitReport));
-      else if (/^(?:13\.\s*)?Recommendation of (?:the )?Branch$/i.test(label)) trySet(nonEmpty(memo.sec13BranchRecommendation));
-      else if (/^(?:14\.\s*)?Recommendation of (?:Internal Control|IC\s*&?\s*CD|ICCD)/i.test(label)) {
+      else if (/^(?:8\s*[.)]\s*)?Source\s+of\s+Repayment$/i.test(label)) trySet(nonEmpty(memo.sourceOfRepayment));
+      else if (/^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report$/i.test(label)) trySet(nonEmpty(memo.branchVisitReport));
+      else if (/^(?:13\s*[.)]\s*)?Recommendation\s+of\s+(?:the\s+)?Branch$/i.test(label)) trySet(nonEmpty(memo.sec13BranchRecommendation));
+      else if (/^(?:14\s*[.)]\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)/i.test(label)) {
         trySet(nonEmpty(memo.sec14IccdRecommendation));
-      } else if (/^(?:15\.\s*)?Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD$/i.test(label)) {
+      } else if (/^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)$/i.test(label)) {
         trySet(nonEmpty(memo.samdObservation));
-      } else if (/^Justification of (?:the )?Proposed Facility$/i.test(label)) trySet(nonEmpty(memo.justificationLines));
+      } else if (/^Justification\s+of\s+(?:the\s+)?Proposed\s+Facility$/i.test(label)) trySet(nonEmpty(memo.justificationLines));
     }
   }
+
+  // 3. Final safety pass: ensure any narrative heading still missing its populated value receives it cleanly
+  const refreshedParas = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'p'));
+  const currentDocText = normalizeVerifyText(
+    refreshedParas.map((p) => getParagraphPlainText(p).trim()).filter(Boolean).join('\n')
+  );
+
+  const ensureHeadingValue = (
+    val: string,
+    headingRegex: RegExp,
+    preferSub: boolean
+  ) => {
+    const trimmed = val.trim();
+    if (!trimmed) return;
+    const firstLine = trimmed
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((l) => l.trim())
+      .find(Boolean);
+    if (!firstLine) return;
+    const normLine = normalizeVerifyText(firstLine);
+    const probe = normLine.length > 48 ? normLine.slice(0, 48).trim() : normLine;
+    if (currentDocText.includes(probe)) return;
+
+    const matchingParas = refreshedParas.filter((p) => {
+      if (!p.parentNode) return false;
+      const nt = normalizeVerifyText(getParagraphPlainText(p));
+      if (!headingRegex.test(nt)) return false;
+      // Skip Table-of-Contents lines ending with dots + page number
+      if (/\.{3,}\s*\d+$/.test(nt)) return false;
+      return true;
+    });
+    if (matchingParas.length === 0) return;
+    const targetP =
+      matchingParas.find((p) => normalizeVerifyText(getParagraphPlainText(p)).includes(':')) ??
+      matchingParas[0];
+    populateNarrativeHeading(xmlDoc, targetP, trimmed, preferSub);
+  };
+
+  ensureHeadingValue(
+    memo.sourceOfRepayment,
+    /^(?:8\s*[.)]\s*)?Source\s+of\s+Repayment\s*:?/i,
+    false
+  );
+  ensureHeadingValue(
+    memo.branchVisitReport,
+    /^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report\s*:?/i,
+    false
+  );
+  ensureHeadingValue(
+    memo.sec13BranchRecommendation,
+    /^(?:13\s*[.)]\s*)?Recommendation\s+of\s+(?:the\s+)?Branch\b/i,
+    true
+  );
+  ensureHeadingValue(
+    memo.sec14IccdRecommendation,
+    /^(?:14\s*[.)]\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)\b/i,
+    false
+  );
+  ensureHeadingValue(
+    memo.samdObservation,
+    /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
+    true
+  );
 }
 
 export async function inspectDocxTemplate(
@@ -1834,25 +1959,25 @@ export async function verifyPopulatedDocxBlob(
   checkNarrative(
     '12. Branch Visit Report',
     memo.branchVisitReport,
-    /^(?:12\.\s*)?Branch\s+Visit\s+Report\s*:?/i,
+    /^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report\s*:?/i,
     ['#branchVisit#', '#branchVisitReport#', '{{branchVisit}}', '{{branchVisitReport}}', '[branchVisit]', '[branchVisitReport]']
   );
   checkNarrative(
     '13. Recommendation of The Branch',
     memo.sec13BranchRecommendation,
-    /^(?:13\.\s*)?Recommendation\s+of\s+(?:the\s+)?Branch\b/i,
+    /^(?:13\s*[.)]\s*)?Recommendation\s+of\s+(?:the\s+)?Branch\b/i,
     ['#branchRecommendation#', '#sec13BranchRecommendation#', '{{branchRecommendation}}', '{{sec13BranchRecommendation}}']
   );
   checkNarrative(
     '14. Recommendation of ICCD',
     memo.sec14IccdRecommendation,
-    /^(?:14\.\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)\b/i,
+    /^(?:14\s*[.)]\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)\b/i,
     ['#iccdRecommendation#', '#sec14IccdRecommendation#', '{{iccdRecommendation}}', '{{sec14IccdRecommendation}}']
   );
   checkNarrative(
     '15. Observation and Recommendation of SAMD',
     memo.samdObservation,
-    /^(?:15\.\s*)?(?:Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD|SAMD\s*Observation(?:\s*(?:and|&)\s*Recommendation)?)\b/i,
+    /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
     ['#samdObservation#', '#samd#', '{{samdObservation}}']
   );
 

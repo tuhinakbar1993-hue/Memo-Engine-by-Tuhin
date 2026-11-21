@@ -30,6 +30,11 @@ export interface ExtractedExcelContent {
 const docxCache = new Map<string, ExtractedDocxContent>();
 const excelCache = new Map<string, ExtractedExcelContent>();
 
+export function clearStructuredDocCaches(): void {
+  docxCache.clear();
+  excelCache.clear();
+}
+
 function fileSig(file: File): string {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }

@@ -412,6 +412,8 @@ export function buildICMemoCoreBlocks(
     includeClosingBlock?: boolean;
     metaOverride?: { dated?: string; memoNo?: string; to?: string; from?: string };
     skipMetadataTable?: boolean;
+    facilityStartNumber?: number;
+    extraBlocksAfterSamd?: Array<Paragraph | Table>;
   } = {}
 ): Array<Paragraph | Table> {
   const ph = memo.placeholders;
@@ -1934,7 +1936,12 @@ export function buildICMemoCoreBlocks(
     }
   }
 
+  if (options.extraBlocksAfterSamd && options.extraBlocksAfterSamd.length > 0) {
+    body.push(...options.extraBlocksAfterSamd);
+  }
+
   // Section 16 (Particulars of the facility)
+  const facNum = options.facilityStartNumber ?? 16;
   const sec16Cols = pctWidths([5, 24, 71]);
   const sec16Rows: Array<[string, string, string, boolean]> = [
     ['a.', 'Facility', 'EXIT with Waiver under BRPD 1 Circular Letter No. 23 dated 29.06.2026', true],
@@ -1947,7 +1954,7 @@ export function buildICMemoCoreBlocks(
     ['h.', 'Repayment Method', 'Lump sum.', false],
   ];
   body.push(
-    p([txt('16. Particulars of the facility:', { bold: true, underline: true })], { before: 45, after: 15 }),
+    p([txt(`${facNum}. Particulars of the facility:`, { bold: true, underline: true })], { before: 45, after: 15 }),
     new Table({
       width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
       layout: TableLayoutType.FIXED,
@@ -2016,7 +2023,7 @@ export function buildICMemoCoreBlocks(
   ];
 
   body.push(
-    p([txt('17. Special Term(s) & Condition(s):', { bold: true, underline: true })], { before: 50, after: 15 }),
+    p([txt(`${facNum + 1}. Special Term(s) & Condition(s):`, { bold: true, underline: true })], { before: 50, after: 15 }),
     p(
       [txt('If the proposal approved, the branch is advised to comply the following special terms and conditions:')],
       { indentLeft: 280, before: 15, after: 20 }

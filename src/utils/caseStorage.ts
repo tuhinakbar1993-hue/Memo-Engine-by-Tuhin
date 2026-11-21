@@ -6,8 +6,10 @@ import type {
   ManualInputsData,
   ScrutinySectionKey,
   StageAiSectionsData,
+  StageMemoDocType,
   StageMemoInputs,
   StageScrutinySectionKey,
+  StageUploadedSourceMeta,
 } from '../types/memo';
 
 const DB_NAME = 'memo_engine_case_db';
@@ -27,6 +29,7 @@ export interface PersistedCaseState {
   stageAiSections?: StageAiSectionsData;
   stageManualEditedSections?: Partial<Record<StageScrutinySectionKey, boolean>>;
   docUploadedFlags?: Partial<Record<DocumentKey, { uploaded: boolean; fileName: string }>>;
+  stageUploadedSources?: Partial<Record<StageMemoDocType, StageUploadedSourceMeta>>;
 }
 
 function openCaseDb(): Promise<IDBDatabase> {
@@ -73,6 +76,7 @@ export async function saveCentralCaseState(
     stageAiSections: state.stageAiSections,
     stageManualEditedSections: state.stageManualEditedSections,
     docUploadedFlags,
+    stageUploadedSources: state.stageUploadedSources,
   };
 
   try {
@@ -120,4 +124,31 @@ export async function loadCentralCaseState(): Promise<PersistedCaseState | null>
   }
 
   return null;
+}
+
+/**
+ * Clears ONLY the active temporary case data (IndexedDB case_state + localStorage fallback).
+ * Never touches saved .docx templates or software configurations.
+ */
+export async function clearCentralCaseState(): Promise<void> {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(DB_NAME);
+    }
+  } catch {
+    // Ignore storage removal errors
+  }
+
+  try {
+    const db = await openCaseDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(ACTIVE_CASE_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Failed to clear case storage.'));
+    });
+    db.close();
+  } catch {
+    // Ignore IndexedDB errors
+  }
 }

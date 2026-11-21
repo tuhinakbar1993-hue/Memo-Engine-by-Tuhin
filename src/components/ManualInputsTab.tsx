@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   RotateCcw,
+  Trash2,
   X,
 } from 'lucide-react';
 import { IC_PLACEHOLDER_SPECS } from '../engines/icMemoEngine';
@@ -44,6 +45,7 @@ interface ManualInputsTabProps {
   onRemoveTemplate: (docType: MemoDocType) => Promise<void>;
   onApplyAllChanges: () => void;
   hasPendingChanges: boolean;
+  onOpenClearConfirm?: () => void;
 }
 
 const DOC_ORDER: DocumentKey[] = [
@@ -75,6 +77,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
   onRemoveTemplate,
   onApplyAllChanges,
   hasPendingChanges,
+  onOpenClearConfirm,
 }) => {
   const [showAllFields, setShowAllFields] = useState(true);
   const [searchFilter, setSearchFilter] = useState('');
@@ -158,6 +161,18 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
           >
             <span>Open IC Memo Preview</span>
           </button>
+
+          {onOpenClearConfirm && (
+            <button
+              type="button"
+              onClick={onOpenClearConfirm}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              title="Clear all uploaded documents, inputs, and generated memo data to start a new case"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Clear All Data</span>
+            </button>
+          )}
         </div>
       </div>
 

@@ -5,13 +5,19 @@ import {
   CheckCircle2,
   Download,
   FileCheck2,
+  FileUp,
   Loader2,
   Pencil,
   RefreshCw,
   RotateCcw,
   Sparkles,
+  Trash2,
+  X,
 } from 'lucide-react';
 import {
+  buildBoardMecRecommendationText,
+  buildMecIcRecommendationText,
+  formatChronologicOrderWithYear,
   STAGE_SECTION_LABELS,
   STAGE_SECTIONS_BY_DOC,
 } from '../engines/icMemoEngine';
@@ -25,6 +31,7 @@ import type {
   StageMemoDocType,
   StageMemoInputs,
   StageScrutinySectionKey,
+  StageUploadedSourceMeta,
 } from '../types/memo';
 import { CarriedICMemoBody } from './CarriedICMemoBody';
 import { TemplateManagerPanel } from './TemplateManagerPanel';
@@ -68,6 +75,10 @@ interface StageMemoTabProps {
   hasPendingChanges: boolean;
   lastAppliedAt: string | null;
   applySignal: number;
+  stageSourceMeta: StageUploadedSourceMeta | null;
+  onUploadStageSource: (docType: StageMemoDocType, file: File) => Promise<void>;
+  onClearStageSource: (docType: StageMemoDocType) => void;
+  onOpenClearConfirm?: () => void;
 }
 
 const STAGE_META: Record<
@@ -138,6 +149,64 @@ const PhVal: React.FC<{ ph: Record<string, string>; code: string; bold?: boolean
   return <span className={bold ? 'font-bold' : ''}>{val}</span>;
 };
 
+const PRIOR_UPLOAD_CONFIG: Record<
+  StageMemoDocType,
+  {
+    heading: string;
+    sourceLabel: string;
+    description: string;
+  }
+> = {
+  mec: {
+    heading: 'Upload Completed IC Memo (Optional Direct Source)',
+    sourceLabel: 'Completed IC Memo',
+    description:
+      'All data from the IC Memo tab automatically carries forward. Optionally upload a finalized IC Memo (PDF, Word, Excel, or image) to extract, verify, and populate all client particulars, liabilities, justifications, and MEC sections.',
+  },
+  board: {
+    heading: 'Upload Completed MEC Memo (Optional Direct Source)',
+    sourceLabel: 'Completed MEC Memo',
+    description:
+      'All data from the IC & MEC Memo tabs automatically carries forward. Optionally upload a finalized MEC Memo (PDF, Word, Excel, or image) to extract, verify, and populate all particulars into the Board Memo format.',
+  },
+  sanction: {
+    heading: 'Upload Completed Board Memo for AI Scrutiny (Optional Direct Source)',
+    sourceLabel: 'Completed Board Memo',
+    description:
+      'All approved data from the Board Memo tab automatically carries forward. Optionally upload a completed Board Memo so AI reads, scrutinizes, cross-verifies every figure, flags missing/inconsistent items, and generates the formal Head Office Sanction Letter.',
+  },
+};
+
+function renderHighlightedCommitteeRec(text: string): React.ReactNode {
+  const lines = (text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return '—';
+
+  return lines.map((line, i) => {
+    const match = line.match(
+      /^(.*?\bin\s+its\s+)(.+?)(\s+meeting\s+held\s+on\s+)(.+?)(\.\s*The\s+Committee\s+recommended\s+the\s+proposal\s+as\s+presented\.?.*)$/i
+    );
+    if (match) {
+      return (
+        <span key={i} className="block">
+          {match[1]}
+          <strong className="font-bold">{match[2]}</strong>
+          {match[3]}
+          <strong className="font-bold">{match[4]}</strong>
+          {match[5]}
+        </span>
+      );
+    }
+    return (
+      <span key={i} className="block">
+        {line}
+      </span>
+    );
+  });
+}
+
 export const StageMemoTab: React.FC<StageMemoTabProps> = ({
   docType,
   stageMemo,
@@ -166,8 +235,13 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
   hasPendingChanges,
   lastAppliedAt,
   applySignal,
+  stageSourceMeta,
+  onUploadStageSource,
+  onClearStageSource,
+  onOpenClearConfirm,
 }) => {
   const meta = STAGE_META[docType];
+  const uploadCfg = PRIOR_UPLOAD_CONFIG[docType];
   const sectionKeys = STAGE_SECTIONS_BY_DOC[docType];
   const ic = stageMemo.icMemo;
   const ph = ic.placeholders;
@@ -209,19 +283,10 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
     const val = stageMemo.stageSections[key];
     if (val && val.trim() !== '') return val;
     if (key === 'mecIcRecommendation') {
-      const no = stageInputs.icMemoNumber.trim() || '[Chronologic Order of the IC Memo pending]';
-      const dt = stageInputs.icMemoDate.trim() || '[IC Memo Date pending]';
-      return `The proposal was placed before the Investment Committee (IC) vide IC Memo (Chronologic Order: ${no}) dated ${dt}. Pending AI scrutiny or manual entry of the IC's formal recommendation.`;
+      return buildMecIcRecommendationText(stageInputs.icMemoNumber, stageInputs.icMemoDate);
     }
     if (key === 'boardMecRecommendation') {
-      const no = stageInputs.mecMemoNumber.trim() || '[Chronologic Order of the MEC Memo pending]';
-      const dt = stageInputs.mecMemoDate.trim() || '[MEC Memo Date pending]';
-      return `The Management Executive Committee (MEC) reviewed the exit-with-waiver proposal vide MEC Memo (Chronologic Order: ${no}) dated ${dt}. Pending AI scrutiny or manual entry of the MEC's formal recommendation.`;
-    }
-    if (key === 'sanctionBoardAuthority') {
-      const no = stageInputs.boardMemoNumber.trim() || '[Chronologic Order of the Board Memo pending]';
-      const dt = stageInputs.boardMemoDate.trim() || '[Board Memo Date pending]';
-      return `Approved by the Board of Directors vide Board Memo (Chronologic Order: ${no}) dated ${dt}. Pending AI scrutiny or manual entry of the sanction authority basis.`;
+      return buildBoardMecRecommendationText(stageInputs.mecMemoNumber, stageInputs.mecMemoDate);
     }
     return '';
   };
@@ -410,6 +475,18 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
               <Download className="w-4 h-4" />
               <span>{downloadingPdf ? 'Rendering PDF...' : 'Download .pdf'}</span>
             </button>
+
+            {onOpenClearConfirm && (
+              <button
+                type="button"
+                onClick={onOpenClearConfirm}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                title="Clear all case data across all tabs to start a new case"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear All Data</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -583,14 +660,115 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
         </div>
       )}
 
-      {!hasAnyCaseData && !hasBranchProposalFile && (
+      {!hasAnyCaseData && !hasBranchProposalFile && !stageSourceMeta?.uploaded && (
         <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-2.5 text-xs flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
           <span>
-            Upload the case documents (including the <span className="font-semibold">Branch Proposal</span>) on the Manual Inputs tab first so all IC Memo data carries forward cleanly into {meta.title}.
+            Upload the case documents on the Manual Inputs tab (for automatic carry-forward), or upload the completed {docType === 'mec' ? 'IC Memo' : docType === 'board' ? 'MEC Memo' : 'Board Memo'} directly below to populate {meta.title}.
           </span>
         </div>
       )}
+
+      {/* Upload Completed Prior Stage Memo Card */}
+      <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <h3 className="font-display text-sm font-semibold text-slate-900">
+              {uploadCfg.heading}
+            </h3>
+            <p className="text-xs text-slate-600 leading-relaxed max-w-3xl">
+              {uploadCfg.description}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <label className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg cursor-pointer transition-colors whitespace-nowrap">
+              {stageSourceMeta?.scrutinizing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileUp className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {stageSourceMeta?.scrutinizing
+                  ? 'Reading & Scrutinizing...'
+                  : stageSourceMeta?.uploaded
+                    ? `Replace ${uploadCfg.sourceLabel}`
+                    : `Upload ${uploadCfg.sourceLabel}`}
+              </span>
+              <input
+                type="file"
+                accept=".pdf,.docx,.xlsx,.xls,image/*"
+                disabled={Boolean(stageSourceMeta?.scrutinizing)}
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    void onUploadStageSource(docType, file);
+                  }
+                  e.target.value = '';
+                }}
+              />
+            </label>
+
+            {stageSourceMeta?.uploaded && !stageSourceMeta?.scrutinizing && (
+              <button
+                type="button"
+                onClick={() => onClearStageSource(docType)}
+                className="inline-flex items-center gap-1 px-2.5 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer whitespace-nowrap"
+                title="Remove uploaded prior memo file reference"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Remove File</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {stageSourceMeta?.scrutinizing && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2 flex items-center gap-2 text-xs font-medium text-emerald-900">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-800 shrink-0" />
+            <span>
+              {stageSourceMeta.stage || `Extracting & scrutinizing ${stageSourceMeta.fileName}...`}
+            </span>
+          </div>
+        )}
+
+        {stageSourceMeta?.uploaded && !stageSourceMeta?.scrutinizing && (
+          <div className="bg-emerald-50/70 border border-emerald-200 rounded-md px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>
+                Loaded &amp; Scrutinized: <span className="font-semibold">{stageSourceMeta.fileName}</span>
+                {stageSourceMeta.uploadedAt ? ` (${stageSourceMeta.uploadedAt})` : ''}
+              </span>
+            </div>
+            <span className="text-[11px] text-emerald-800 font-medium">
+              Extracted data merged into {meta.title}
+            </span>
+          </div>
+        )}
+
+        {stageSourceMeta?.error && (
+          <div className="bg-red-50 border border-red-200 rounded-md px-3 py-2 text-xs text-red-800 font-medium">
+            {stageSourceMeta.error}
+          </div>
+        )}
+
+        {stageSourceMeta?.missingOrInconsistentNotes &&
+          stageSourceMeta.missingOrInconsistentNotes.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-md p-3 space-y-1 text-xs text-amber-950">
+              <div className="flex items-center gap-1.5 font-semibold">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                <span>AI Verification &amp; Missing/Inconsistent Data Notes:</span>
+              </div>
+              <ul className="list-disc pl-5 space-y-0.5 text-[11px]">
+                {stageSourceMeta.missingOrInconsistentNotes.map((note, idx) => (
+                  <li key={idx}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+      </div>
 
       {aiError && (
         <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg px-4 py-3 text-sm">
@@ -636,6 +814,14 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
                 placeholder="e.g., SAMD/IC/2026/114"
                 className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />
+              {stageInputs.icMemoNumber.trim() && (
+                <p className="text-[11px] text-emerald-800 mt-1">
+                  Sec. 16 format:{' '}
+                  <span className="font-semibold">
+                    {formatChronologicOrderWithYear(stageInputs.icMemoNumber, '')}
+                  </span>
+                </p>
+              )}
             </div>
             <div>
               <label
@@ -706,6 +892,14 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
                   placeholder="e.g., SAMD/MEC/2026/058"
                   className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-700"
                 />
+                {stageInputs.mecMemoNumber.trim() && (
+                  <p className="text-[11px] text-emerald-800 mt-1">
+                    Sec. 17 format:{' '}
+                    <span className="font-semibold">
+                      {formatChronologicOrderWithYear(stageInputs.mecMemoNumber, '')}
+                    </span>
+                  </p>
+                )}
               </div>
               <div>
                 <label
@@ -901,7 +1095,7 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
                 {isEditing ? (
                   <textarea
                     rows={5}
-                    value={rawVal}
+                    value={stageAiSections[secKey] !== null ? stageAiSections[secKey]! : displayText}
                     onChange={(e) => onUpdateStageAiSection(secKey, e.target.value, true)}
                     placeholder={`Enter or refine ${label}...`}
                     className="w-full px-3 py-2 text-xs text-slate-900 bg-white border border-emerald-400 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-700 leading-relaxed"
@@ -1001,179 +1195,537 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
               </div>
             </div>
 
-            {/* Stage Metadata Table */}
-            <table className="w-[78%] table-fixed text-[10pt] border border-black">
-              <colgroup>
-                <col className="w-[44%]" />
-                <col className="w-[5%]" />
-                <col className="w-[51%]" />
-              </colgroup>
-              <tbody>
-                <tr>
-                  <td className="border border-black px-2 py-0.5 font-bold">Dated</td>
-                  <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
-                  <td className="border border-black px-2 py-0.5 font-bold">
-                    {docType === 'mec'
-                      ? stageInputs.mecMemoDate || ph['#1#'] || '—'
-                      : docType === 'board'
-                        ? stageInputs.boardMemoDate || stageInputs.mecMemoDate || ph['#1#'] || '—'
-                        : stageInputs.sanctionDate || stageInputs.boardMemoDate || ph['#1#'] || '—'}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="border border-black px-2 py-0.5 font-bold">
-                    {docType === 'mec'
-                      ? 'Chronologic Order of the MEC Memo'
-                      : docType === 'board'
-                        ? 'Chronologic Order of the Board Memo'
-                        : 'Sanction Ref. No'}
-                  </td>
-                  <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
-                  <td className="border border-black px-2 py-0.5 font-bold">
-                    {docType === 'mec'
-                      ? stageInputs.mecMemoNumber || '—'
-                      : docType === 'board'
-                        ? stageInputs.boardMemoNumber || '—'
-                        : stageInputs.sanctionRefNumber || '—'}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="border border-black px-2 py-0.5 font-bold">
-                    {docType === 'mec'
-                      ? 'Chronologic Order of the IC Memo & Date'
-                      : docType === 'board'
-                        ? 'Chronologic Order of the MEC Memo & Date'
-                        : 'Chronologic Order of the Board Memo & Date'}
-                  </td>
-                  <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
-                  <td className="border border-black px-2 py-0.5 font-bold">
-                    {docType === 'mec'
-                      ? `${stageInputs.icMemoNumber || '—'} dated ${stageInputs.icMemoDate || '—'}`
-                      : docType === 'board'
-                        ? `${stageInputs.mecMemoNumber || '—'} dated ${stageInputs.mecMemoDate || '—'}`
-                        : `${stageInputs.boardMemoNumber || '—'} dated ${stageInputs.boardMemoDate || '—'}`}
-                  </td>
-                </tr>
-                {docType !== 'mec' && (
-                  <tr>
-                    <td className="border border-black px-2 py-0.5 font-bold">
-                      {docType === 'board'
-                        ? 'Chronologic Order of the IC Memo & Date'
-                        : 'Prior IC & MEC Chronologic Orders'}
-                    </td>
-                    <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
-                    <td className="border border-black px-2 py-0.5">
-                      {docType === 'board'
-                        ? `${stageInputs.icMemoNumber || '—'} dated ${stageInputs.icMemoDate || '—'}`
-                        : `IC: ${stageInputs.icMemoNumber || '—'} (${stageInputs.icMemoDate || '—'}) | MEC: ${stageInputs.mecMemoNumber || '—'} (${stageInputs.mecMemoDate || '—'})`}
-                    </td>
-                  </tr>
-                )}
-                <tr>
-                  <td className="border border-black px-2 py-0.5 font-bold">To</td>
-                  <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
-                  <td className="border border-black px-2 py-0.5 font-bold">{meta.toLine}</td>
-                </tr>
-                <tr>
-                  <td className="border border-black px-2 py-0.5 font-bold">From</td>
-                  <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
-                  <td className="border border-black px-2 py-0.5 font-bold">SAMD</td>
-                </tr>
-              </tbody>
-            </table>
+            {/* Stage Metadata & Body Rendered Per Prescribed Format */}
+            {docType === 'sanction' ? (
+              <>
+                <table className="w-[82%] table-fixed text-[10pt] border border-black">
+                  <colgroup>
+                    <col className="w-[38%]" />
+                    <col className="w-[4%]" />
+                    <col className="w-[58%]" />
+                  </colgroup>
+                  <tbody>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">Sanction Ref. No.</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {stageInputs.sanctionRefNumber || '[Sanction Reference Pending]'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">Sanction Date</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {stageInputs.sanctionDate || stageInputs.boardMemoDate || ph['#1#'] || '—'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">Board Memo Reference</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {formatChronologicOrderWithYear(
+                          stageInputs.boardMemoNumber,
+                          '[Chronologic Order of the Board Memo]'
+                        )}{' '}
+                        dated {stageInputs.boardMemoDate || '[Board Memo Date]'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">Prior Committee Chain</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5">
+                        MEC:{' '}
+                        {stageInputs.mecMemoNumber
+                          ? formatChronologicOrderWithYear(stageInputs.mecMemoNumber, '')
+                          : '—'}{' '}
+                        ({stageInputs.mecMemoDate || '—'}) | IC:{' '}
+                        {stageInputs.icMemoNumber
+                          ? formatChronologicOrderWithYear(stageInputs.icMemoNumber, '')
+                          : '—'}{' '}
+                        ({stageInputs.icMemoDate || '—'})
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">Branch Proposal Ref.</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5">
+                        <PhVal ph={ph} code="#64#" bold={false} /> dated{' '}
+                        <PhVal ph={ph} code="#65#" bold={false} />
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">From</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        Special Asset Management Division (SAMD), Head Office
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">To</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        The Head of Branch, <PhVal ph={ph} code="#3#" /> Branch
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
 
-            {/* A/C & Branch + Subject */}
-            <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
-              <colgroup>
-                <col className="w-[58%]" />
-                <col className="w-[42%]" />
-              </colgroup>
-              <tbody>
-                <tr>
-                  <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center">
-                    A/C: <PhVal ph={ph} code="#2#" /> (CIS: <PhVal ph={ph} code="#69#" />)
-                  </td>
-                  <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center">
-                    Branch: <PhVal ph={ph} code="#3#" />
-                  </td>
-                </tr>
-                <tr>
-                  <td
-                    colSpan={2}
-                    className="border border-dotted border-black px-2 py-1 font-bold leading-snug"
-                  >
-                    Subject: The customer proposed for full and final settlement of their liability by allowing waiver of Tk.<PhVal ph={ph} code="#4#" /> along with profit/compensation to be accrued up to the date of full and final settlement as follows:
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-
-            <p className="text-right text-[10pt] font-bold">
-              [All Figures in this Memo are in Million BDT Unless Stated Otherwise]
-            </p>
-
-            {/* Full Carried-Forward IC Memo Tables & Sections (100% Preserved Without Omission) */}
-            <CarriedICMemoBody memo={ic} />
-
-            {/* Prior Committee Recommendations Carried Forward */}
-            {docType === 'board' && stageMemo.stageSections.mecIcRecommendation && (
-              <div className="space-y-1 pt-2">
-                <p className="font-bold underline text-[10pt]">
-                  Recommendation of the Investment Committee (IC) (Carried Forward):
-                </p>
-                <p className="text-[10pt] whitespace-pre-line leading-snug">
-                  {stageMemo.stageSections.mecIcRecommendation}
-                </p>
-              </div>
-            )}
-
-            {docType === 'sanction' && (
-              <div className="space-y-2 pt-2">
-                {stageMemo.stageSections.mecIcRecommendation && (
-                  <div className="space-y-1">
-                    <p className="font-bold underline text-[10pt]">
-                      Recommendation of the Investment Committee (IC) (Carried Forward):
-                    </p>
-                    <p className="text-[10pt] whitespace-pre-line leading-snug">
-                      {stageMemo.stageSections.mecIcRecommendation}
-                    </p>
-                  </div>
-                )}
-                {stageMemo.stageSections.boardMecRecommendation && (
-                  <div className="space-y-1">
-                    <p className="font-bold underline text-[10pt]">
-                      Recommendation of the Management Executive Committee (MEC) (Carried Forward):
-                    </p>
-                    <p className="text-[10pt] whitespace-pre-line leading-snug">
-                      {stageMemo.stageSections.boardMecRecommendation}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Stage Sections Rendered Inside the Official Sheet */}
-            <div className="space-y-2.5 pt-2">
-              {sectionKeys.map((secKey, idx) => (
-                <div key={secKey} className="space-y-1">
-                  <p className="font-bold underline text-[10pt]">
-                    {idx + 1}. {STAGE_SECTION_LABELS[secKey]}:
+                <div className="text-[10pt] leading-snug pt-1 space-y-0.5">
+                  <p className="font-bold">The Head of Branch,</p>
+                  <p>Sammilito Islami Bank PLC.</p>
+                  <p>
+                    <PhVal ph={ph} code="#3#" bold={false} /> Branch
                   </p>
-                  <p className="text-[10pt] whitespace-pre-line leading-snug">
-                    {buildFallbackDisplay(secKey) || '—'}
+                  <p className="pt-1">Dear Sir / Madam,</p>
+                </div>
+
+                <div className="border border-black px-2.5 py-1.5 text-[10pt] font-bold leading-snug">
+                  Subject: Head Office Sanction of Full &amp; Final Exit with Waiver Facility — A/C:{' '}
+                  <PhVal ph={ph} code="#2#" /> (CIS: <PhVal ph={ph} code="#69#" />), Client:{' '}
+                  {ic.branchProposal?.section10Particulars?.nameOfClient?.trim() || (
+                    <PhVal ph={ph} code="#2#" />
+                  )}
+                  , Branch: <PhVal ph={ph} code="#3#" /> under BRPD Circular Letter No. 23 dated
+                  29.06.2026.
+                </div>
+
+                <p className="text-right text-[10pt] font-bold">
+                  [All Figures in this Sanction Letter are in Million BDT Unless Stated Otherwise]
+                </p>
+
+                {/* 1. Board Approval Reference & Sanction Basis */}
+                <div className="space-y-1 pt-1">
+                  <p className="font-bold underline text-[10pt]">
+                    1. Board Approval Reference &amp; Sanction Basis:
+                  </p>
+                  <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                    {buildFallbackDisplay('sanctionBoardAuthority') || '—'}
                   </p>
                 </div>
-              ))}
-            </div>
+
+                {/* 2. Particulars of Sanctioned Facility, Client & Liability Matrix */}
+                <div className="space-y-1 pt-1">
+                  <p className="font-bold underline text-[10pt]">
+                    2. Particulars of Sanctioned Facility, Client &amp; Liability Matrix:
+                  </p>
+                  <table className="w-full table-fixed text-[9.5pt] border border-black tabular-nums">
+                    <colgroup>
+                      <col className="w-[34%]" />
+                      <col className="w-[66%]" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th className="border border-black px-2 py-1 text-left">
+                          Sanction Parameter
+                        </th>
+                        <th className="border border-black px-2 py-1 text-left">
+                          Sanctioned / Cross-Verified Particular
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Name of the Client &amp; A/C No.
+                        </td>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          {ic.branchProposal?.section10Particulars?.nameOfClient?.trim() || (
+                            <PhVal ph={ph} code="#2#" />
+                          )}{' '}
+                          | A/C: <PhVal ph={ph} code="#2#" /> (CIS: <PhVal ph={ph} code="#69#" />)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Branch Name &amp; Nature of Business
+                        </td>
+                        <td className="border border-black px-2 py-0.5">
+                          <PhVal ph={ph} code="#3#" bold={false} /> Branch |{' '}
+                          <PhVal ph={ph} code="#54#" bold={false} />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Mode / Product &amp; Original Limit
+                        </td>
+                        <td className="border border-black px-2 py-0.5">
+                          <PhVal ph={ph} code="#5#" bold={false} /> | Original Limit: Tk.{' '}
+                          <PhVal ph={ph} code="#6#" bold={false} /> M (Sec. 2 Limit: Tk.{' '}
+                          <PhVal ph={ph} code="#56#" bold={false} /> M; Validity:{' '}
+                          <PhVal ph={ph} code="#58#" bold={false} />)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          NET Outstanding as on <PhVal ph={ph} code="#68#" />
+                        </td>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Tk. <PhVal ph={ph} code="#25#" /> Million (Principal: Tk.{' '}
+                          <PhVal ph={ph} code="#7#" /> M; Charges: Tk. <PhVal ph={ph} code="#8#" /> M;
+                          Charged Profit: Tk. <PhVal ph={ph} code="#10#" /> M; Comp.: Tk.{' '}
+                          <PhVal ph={ph} code="#11#" /> M; Unapplied Comp.: Tk.{' '}
+                          <PhVal ph={ph} code="#12#" /> M)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Overdue &amp; Cumulative Recovery
+                        </td>
+                        <td className="border border-black px-2 py-0.5">
+                          Overdue: Tk. <PhVal ph={ph} code="#59#" bold={false} /> Million | Recovery
+                          Till Date: Tk. <PhVal ph={ph} code="#60#" bold={false} /> Million
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Cost of Fund &amp; Permissible Ceiling
+                        </td>
+                        <td className="border border-black px-2 py-0.5">
+                          COF Surplus/Deficit: Tk. <PhVal ph={ph} code="#31#" bold={false} /> M |
+                          Breakup Total (#7#+#8#+#31#): Tk.{' '}
+                          <PhVal ph={ph} code="#32#" bold={false} /> M | Max Waiver Considering COF:
+                          Tk. <PhVal ph={ph} code="#44#" bold={false} /> M
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Sanctioned Down Payment
+                        </td>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Tk. <PhVal ph={ph} code="#35#" /> Million deposited in A/C:{' '}
+                          <PhVal ph={ph} code="#36#" /> on <PhVal ph={ph} code="#68#" />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Sanctioned Waiver Amount
+                        </td>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Tk. <PhVal ph={ph} code="#4#" /> Million (plus accrued/unapplied profit up
+                          to execution date)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Sanctioned Settlement / Exit Amount
+                        </td>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Tk. <PhVal ph={ph} code="#27#" /> Million (Lump Sum without charging
+                          further profit)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Sanctioned Settlement Period
+                        </td>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          <PhVal ph={ph} code="#28#" />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Verified Source of Repayment
+                        </td>
+                        <td className="border border-black px-2 py-0.5">
+                          {ic.sourceOfRepayment || 'As stipulated in the approved Board Memorandum'}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 3. AI Cross-Verified Facility & Liability Confirmation */}
+                <div className="space-y-1 pt-1">
+                  <p className="font-bold underline text-[10pt]">
+                    3. AI Cross-Verified Facility &amp; Liability Confirmation:
+                  </p>
+                  <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                    {buildFallbackDisplay('sanctionCrossVerifiedSummary') || '—'}
+                  </p>
+                </div>
+
+                {/* 4. Collateral Security, Legal & Regulatory Clearance Schedule */}
+                <div className="space-y-1 pt-1">
+                  <p className="font-bold underline text-[10pt]">
+                    4. Collateral Security, Legal &amp; Regulatory Clearance Schedule:
+                  </p>
+                  <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                    {buildFallbackDisplay('sanctionSecurityAndCompliance') || '—'}
+                  </p>
+                </div>
+
+                {/* 5. Operative Terms, Conditions & Redemption Covenants */}
+                <div className="space-y-1 pt-1">
+                  <p className="font-bold underline text-[10pt]">
+                    5. Operative Terms, Conditions &amp; Redemption Covenants:
+                  </p>
+                  <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                    {buildFallbackDisplay('sanctionSpecialConditions') || '—'}
+                  </p>
+                  <div className="pl-4 space-y-1 text-[10pt] pt-1">
+                    <p>
+                      <span className="font-semibold">vii.</span> The waiver of profit/compensation
+                      shall be adjusted from FAD, Head Office from the provision amount kept (if
+                      any), and the remaining amount shall be adjusted gradually by the Branch upon
+                      full realization of the sanctioned settlement amount within the approved
+                      deadline.
+                    </p>
+                    <p>
+                      <span className="font-semibold">viii.</span> Branch shall strictly comply with
+                      Bangladesh Bank BRPD Circular No. 06/22, Circular Letter No. 18/22, 46/22, BRPD
+                      Circular Letter No. 23 dated 29.06.2026 and all applicable Head Office
+                      instructions.
+                    </p>
+                    <p className="font-bold">
+                      ix. The Profit rate of the stipulated investment shall NOT be changed or reduced
+                      to 0.00% until full and final adjustment of the Investment, as approved by Head
+                      Office, and all legal/suit withdrawal charges shall be borne by the client.
+                    </p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <table className="w-[78%] table-fixed text-[10pt] border border-black">
+                  <colgroup>
+                    <col className="w-[44%]" />
+                    <col className="w-[5%]" />
+                    <col className="w-[51%]" />
+                  </colgroup>
+                  <tbody>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">Dated</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {docType === 'mec'
+                          ? stageInputs.mecMemoDate || stageInputs.icMemoDate || ph['#1#'] || '—'
+                          : stageInputs.boardMemoDate || stageInputs.mecMemoDate || ph['#1#'] || '—'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {docType === 'mec'
+                          ? 'Chronologic Order of the MEC Memo'
+                          : 'Chronologic Order of the Board Memo'}
+                      </td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {docType === 'mec'
+                          ? stageInputs.mecMemoNumber
+                            ? formatChronologicOrderWithYear(stageInputs.mecMemoNumber, '')
+                            : '—'
+                          : stageInputs.boardMemoNumber
+                            ? formatChronologicOrderWithYear(stageInputs.boardMemoNumber, '')
+                            : '—'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {docType === 'mec'
+                          ? 'Chronologic Order of the IC Memo & Date'
+                          : 'Chronologic Order of the MEC Memo & Date'}
+                      </td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {docType === 'mec'
+                          ? `${
+                              stageInputs.icMemoNumber
+                                ? formatChronologicOrderWithYear(stageInputs.icMemoNumber, '')
+                                : '—'
+                            } dated ${stageInputs.icMemoDate || '—'}`
+                          : `${
+                              stageInputs.mecMemoNumber
+                                ? formatChronologicOrderWithYear(stageInputs.mecMemoNumber, '')
+                                : '—'
+                            } dated ${stageInputs.mecMemoDate || '—'}`}
+                      </td>
+                    </tr>
+                    {docType === 'board' && (
+                      <tr>
+                        <td className="border border-black px-2 py-0.5 font-bold">
+                          Chronologic Order of the IC Memo &amp; Date
+                        </td>
+                        <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                        <td className="border border-black px-2 py-0.5">
+                          {`${
+                            stageInputs.icMemoNumber
+                              ? formatChronologicOrderWithYear(stageInputs.icMemoNumber, '')
+                              : '—'
+                          } dated ${stageInputs.icMemoDate || '—'}`}
+                        </td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">To</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">{meta.toLine}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-black px-2 py-0.5 font-bold">From</td>
+                      <td className="border border-black px-1 py-0.5 font-bold text-center">:</td>
+                      <td className="border border-black px-2 py-0.5 font-bold">
+                        {docType === 'board'
+                          ? 'Management Executive Committee (MEC) / SAMD'
+                          : 'SAMD'}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {/* A/C & Branch + Subject */}
+                <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[58%]" />
+                    <col className="w-[42%]" />
+                  </colgroup>
+                  <tbody>
+                    <tr>
+                      <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center">
+                        A/C: <PhVal ph={ph} code="#2#" /> (CIS: <PhVal ph={ph} code="#69#" />)
+                      </td>
+                      <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center">
+                        Branch: <PhVal ph={ph} code="#3#" />
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        colSpan={2}
+                        className="border border-dotted border-black px-2 py-1 font-bold leading-snug"
+                      >
+                        Subject: The customer proposed for full and final settlement of their
+                        liability by allowing waiver of Tk.
+                        <PhVal ph={ph} code="#4#" /> along with profit/compensation to be accrued
+                        up to the date of full and final settlement as follows:
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p className="text-right text-[10pt] font-bold">
+                  [All Figures in this Memo are in Million BDT Unless Stated Otherwise]
+                </p>
+
+                {/* Carried-Forward IC Memo Tables & Sections with Section 16 (IC) and Section 17 (MEC) in exact numbered order */}
+                <CarriedICMemoBody
+                  memo={ic}
+                  facilityStartNumber={docType === 'mec' ? 17 : 18}
+                  afterSamdSlot={
+                    docType === 'mec' ? (
+                      <div className="space-y-1 text-[10pt]">
+                        <p className="font-bold underline">
+                          16. Recommendation of the Investment Committee (IC):
+                        </p>
+                        <div className="pl-2 leading-snug">
+                          {renderHighlightedCommitteeRec(buildFallbackDisplay('mecIcRecommendation'))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 text-[10pt]">
+                        {(stageMemo.stageSections.mecIcRecommendation ||
+                          stageInputs.icMemoNumber ||
+                          stageInputs.icMemoDate) && (
+                          <div className="space-y-1">
+                            <p className="font-bold underline">
+                              16. Recommendation of the Investment Committee (IC):
+                            </p>
+                            <div className="pl-2 leading-snug">
+                              {renderHighlightedCommitteeRec(
+                                stageMemo.stageSections.mecIcRecommendation ||
+                                  buildMecIcRecommendationText(
+                                    stageInputs.icMemoNumber,
+                                    stageInputs.icMemoDate
+                                  )
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <p className="font-bold underline">
+                            17. Management Executive Committee (MEC) Recommendation:
+                          </p>
+                          <div className="pl-2 leading-snug">
+                            {renderHighlightedCommitteeRec(
+                              buildFallbackDisplay('boardMecRecommendation')
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
+                />
+
+                {/* Additional Stage Appraisal / SAMD / Board Resolution Sections */}
+                {docType === 'mec' ? (
+                  <div className="space-y-2.5 pt-2">
+                    <div className="space-y-1">
+                      <p className="font-bold underline text-[10pt]">
+                        19. {STAGE_SECTION_LABELS.mecExecutiveSummary}:
+                      </p>
+                      <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                        {buildFallbackDisplay('mecExecutiveSummary') || '—'}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-bold underline text-[10pt]">
+                        20. {STAGE_SECTION_LABELS.mecSamdRecommendation}:
+                      </p>
+                      <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                        {buildFallbackDisplay('mecSamdRecommendation') || '—'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 pt-2">
+                    {stageMemo.stageSections.mecExecutiveSummary && (
+                      <div className="space-y-1">
+                        <p className="font-bold underline text-[10pt]">
+                          Executive Appraisal &amp; Waiver Rationale (Carried Forward from MEC
+                          Memo):
+                        </p>
+                        <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                          {stageMemo.stageSections.mecExecutiveSummary}
+                        </p>
+                      </div>
+                    )}
+                    {stageMemo.stageSections.mecSamdRecommendation && (
+                      <div className="space-y-1">
+                        <p className="font-bold underline text-[10pt]">
+                          Observation and Recommendation of SAMD for MEC (Carried Forward):
+                        </p>
+                        <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                          {stageMemo.stageSections.mecSamdRecommendation}
+                        </p>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <p className="font-bold underline text-[10pt]">
+                        20. {STAGE_SECTION_LABELS.boardProposalRationale}:
+                      </p>
+                      <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                        {buildFallbackDisplay('boardProposalRationale') || '—'}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-bold underline text-[10pt]">
+                        21. {STAGE_SECTION_LABELS.boardResolutionTerms}:
+                      </p>
+                      <p className="text-[10pt] whitespace-pre-line leading-snug pl-2">
+                        {buildFallbackDisplay('boardResolutionTerms') || '—'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
 
             {/* Closing Placement Box & Signatories */}
             <div className="pt-4 space-y-6">
               <div className="border border-black p-2.5 text-center font-bold text-[10pt]">
                 {docType === 'mec'
-                  ? 'Placed before the Management Executive Committee (MEC) for kind consideration and recommendation to the Board of Directors.'
+                  ? 'The proposal is hereby placed before the Management Executive Committee (MEC) for kind recommendation/approval.'
                   : docType === 'board'
-                    ? 'Placed before the Board of Directors for kind consideration and approval.'
-                    : 'Issued in strict conformity with Board Approval and Bank policy. All terms & conditions shall bind until full adjustment of the settlement amount.'}
+                    ? 'Submitted before the Honourable Board of Directors for kind consideration and approval.'
+                    : 'Issued under Head Office Sanction Authority. Strict compliance with all sanctioned terms, timelines, and BRPD directives is mandatory.'}
               </div>
 
               <div className="grid grid-cols-4 gap-3 pt-8 text-center text-[9pt]">

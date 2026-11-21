@@ -21,6 +21,7 @@ import {
   renderPdfPagesToImages,
 } from './pdfUtils';
 import {
+  clearStructuredDocCaches,
   extractDocxContent,
   extractExcelContent,
   isDocxFile,
@@ -28,6 +29,12 @@ import {
 } from './structuredDocUtils';
 
 const parseCache = new Map<string, unknown>();
+
+export function clearDocumentParseCache(): void {
+  parseCache.clear();
+  inFlightSourcePrep.clear();
+  clearStructuredDocCaches();
+}
 
 function getFileSignature(prefix: string, file: File): string {
   return `${prefix}:${file.name}:${file.size}:${file.lastModified}`;
@@ -380,6 +387,79 @@ export function warmBranchProposalSource(file: File): void {
   } else {
     setTimeout(trigger, 0);
   }
+}
+
+/**
+ * Prepares any completed memo document (IC Memo, MEC Memo, or Board Memo) across PDF, Word (.docx),
+ * Excel, or Image into multimodal text + rendered page images for AI scrutiny & extraction.
+ */
+export async function prepareGenericDocumentSource(
+  file: File,
+  cachePrefix = 'stage_src',
+  onStage?: StageCallback
+): Promise<BranchProposalSource> {
+  const cached = getCachedParse<BranchProposalSource>(cachePrefix, file);
+  if (cached) return cached;
+
+  const sourceId = getFileSignature(cachePrefix, file);
+
+  if (isDocxFile(file)) {
+    onStage?.('Reading Word (.docx) document...');
+    const docx = await extractDocxContent(file);
+    return setCachedParse(cachePrefix, file, {
+      sourceId,
+      fileName: file.name,
+      rawText: docx.rawText,
+      pageImages: [],
+    });
+  }
+
+  if (isExcelFile(file)) {
+    onStage?.('Reading Excel workbook...');
+    const excel = await extractExcelContent(file);
+    return setCachedParse(cachePrefix, file, {
+      sourceId,
+      fileName: file.name,
+      rawText: excel.rawText,
+      pageImages: [],
+    });
+  }
+
+  if (file.type.startsWith('image/')) {
+    onStage?.('Reading uploaded image...');
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ''));
+      reader.onerror = () => reject(new Error('Failed to read image file.'));
+      reader.readAsDataURL(file);
+    });
+    const dims = await getImageDimensions(dataUrl);
+    const ocrRes = await ocrImagesToPdfLines(
+      [{ dataUrl, width: dims.width, height: dims.height }],
+      onStage
+    );
+    const base64 = dataUrl.split(',')[1] ?? '';
+    return setCachedParse(cachePrefix, file, {
+      sourceId,
+      fileName: file.name,
+      rawText: ocrRes.rawText,
+      pageImages: base64 ? [{ mimeType: file.type || 'image/jpeg', data: base64 }] : [],
+    });
+  }
+
+  // PDF: read embedded text + render page images concurrently for multimodal Gemini scrutiny
+  onStage?.('Reading PDF text & rendering pages...');
+  const [pdfText, rendered] = await Promise.all([
+    extractPdfLines(file).then((r) => r.rawText),
+    renderPdfPagesToImages(file, 1200, 14),
+  ]);
+
+  return setCachedParse(cachePrefix, file, {
+    sourceId,
+    fileName: file.name,
+    rawText: pdfText,
+    pageImages: rendered.map((r) => ({ mimeType: r.mimeType, data: r.data })),
+  });
 }
 
 /**

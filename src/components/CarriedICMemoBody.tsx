@@ -3,8 +3,6 @@ import type { ResolvedICMemo } from '../types/memo';
 
 interface CarriedICMemoBodyProps {
   memo: ResolvedICMemo;
-  facilityStartNumber?: number;
-  afterSamdSlot?: React.ReactNode;
 }
 
 const TokenVal: React.FC<{ ph: Record<string, string>; code: string; bold?: boolean }> = ({
@@ -23,11 +21,7 @@ const TokenVal: React.FC<{ ph: Record<string, string>; code: string; bold?: bool
   return <span className={bold ? 'font-bold' : ''}>{val}</span>;
 };
 
-export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({
-  memo,
-  facilityStartNumber = 16,
-  afterSamdSlot,
-}) => {
+export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({ memo }) => {
   const ph = memo.placeholders;
   const bp = memo.branchProposal;
 
@@ -968,13 +962,9 @@ export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({
         </div>
       </div>
 
-      {afterSamdSlot}
-
-      {/* Section 16 (or dynamic start number for MEC/Board) */}
+      {/* Section 16 */}
       <div className="space-y-1">
-        <p className="font-bold underline text-[10pt]">
-          {facilityStartNumber}. Particulars of the facility:
-        </p>
+        <p className="font-bold underline text-[10pt]">16. Particulars of the facility:</p>
         <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
           <colgroup>
             <col className="w-[5%]" />
@@ -1039,11 +1029,9 @@ export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({
         </table>
       </div>
 
-      {/* Section 17 (or dynamic +1 number for MEC/Board) */}
+      {/* Section 17 */}
       <div className="space-y-1 text-[10pt]">
-        <p className="font-bold underline">
-          {facilityStartNumber + 1}. Special Term(s) &amp; Condition(s):
-        </p>
+        <p className="font-bold underline">17. Special Term(s) &amp; Condition(s):</p>
         <p className="pl-4">
           If the proposal approved, the branch is advised to comply the following special terms and conditions:
         </p>

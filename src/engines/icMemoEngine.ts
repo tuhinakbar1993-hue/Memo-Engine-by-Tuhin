@@ -329,207 +329,26 @@ export const INITIAL_STAGE_AI_SECTIONS: StageAiSectionsData = {
   boardResolutionTerms: null,
   sanctionBoardAuthority: null,
   sanctionCrossVerifiedSummary: null,
-  sanctionSecurityAndCompliance: null,
   sanctionSpecialConditions: null,
 };
 
 export const STAGE_SECTIONS_BY_DOC: Record<StageMemoDocType, StageScrutinySectionKey[]> = {
   mec: ['mecIcRecommendation', 'mecExecutiveSummary', 'mecSamdRecommendation'],
   board: ['boardMecRecommendation', 'boardProposalRationale', 'boardResolutionTerms'],
-  sanction: [
-    'sanctionBoardAuthority',
-    'sanctionCrossVerifiedSummary',
-    'sanctionSecurityAndCompliance',
-    'sanctionSpecialConditions',
-  ],
+  sanction: ['sanctionBoardAuthority', 'sanctionCrossVerifiedSummary', 'sanctionSpecialConditions'],
 };
 
 export const STAGE_SECTION_LABELS: Record<StageScrutinySectionKey, string> = {
   mecIcRecommendation: 'Recommendation of the Investment Committee (IC)',
   mecExecutiveSummary: 'Executive Appraisal & Waiver Rationale for MEC',
   mecSamdRecommendation: 'Observation and Recommendation of SAMD for MEC',
-  boardMecRecommendation: 'Management Executive Committee (MEC) Recommendation',
+  boardMecRecommendation: 'Recommendation of the Management Executive Committee (MEC)',
   boardProposalRationale: 'Board Memorandum Summary & Financial Justification',
   boardResolutionTerms: 'Proposed Board Resolution & Approval Terms',
   sanctionBoardAuthority: 'Board Approval Reference & Sanction Basis',
   sanctionCrossVerifiedSummary: 'AI Cross-Verified Facility & Liability Confirmation',
-  sanctionSecurityAndCompliance: 'Collateral Security, Legal & Regulatory Clearance Schedule',
   sanctionSpecialConditions: 'Operative Terms, Conditions & Redemption Covenants',
 };
-
-export function formatChronologicOrderWithYear(
-  rawValue: string,
-  fallbackPlaceholder: string
-): string {
-  const trimmed = (rawValue || '').trim();
-  if (!trimmed) return `${fallbackPlaceholder}/26`;
-  if (/\/26$/i.test(trimmed)) return trimmed;
-  return `${trimmed}/26`;
-}
-
-export function buildMecIcRecommendationText(
-  icMemoNumber: string,
-  icMemoDate: string
-): string {
-  const orderWithYear = formatChronologicOrderWithYear(
-    icMemoNumber,
-    '[Chronologic Order of the IC Memo]'
-  );
-  const dateStr = (icMemoDate || '').trim() || '[IC Memo Date]';
-  return `This proposal was placed before the Investment Committee (IC) in its ${orderWithYear} meeting held on ${dateStr}. The Committee recommended the proposal as presented.`;
-}
-
-export function buildBoardMecRecommendationText(
-  mecMemoNumber: string,
-  mecMemoDate: string
-): string {
-  const orderWithYear = formatChronologicOrderWithYear(
-    mecMemoNumber,
-    '[Chronologic Order of the MEC Memo]'
-  );
-  const dateStr = (mecMemoDate || '').trim() || '[MEC Memo Date]';
-  return `This proposal was placed before the Management Executive Committee (MEC) in its ${orderWithYear} meeting held on ${dateStr}. The Committee recommended the proposal as presented.`;
-}
-
-function buildDefaultSanctionBoardAuthority(
-  icMemo: ResolvedICMemo,
-  stageInputs: StageMemoInputs,
-  stageAi: StageAiSectionsData
-): string {
-  const ph = icMemo.placeholders;
-  const hasCore = Boolean(
-    ph['#2#'] ||
-      ph['#3#'] ||
-      ph['#4#'] ||
-      ph['#27#'] ||
-      stageInputs.boardMemoNumber ||
-      stageInputs.boardMemoDate ||
-      stageAi.boardResolutionTerms ||
-      stageAi.boardProposalRationale
-  );
-  if (!hasCore) return '';
-
-  const boardOrder = formatChronologicOrderWithYear(
-    stageInputs.boardMemoNumber,
-    '[Chronologic Order of the Board Memo]'
-  );
-  const boardDate = stageInputs.boardMemoDate || '[Board Memo Date]';
-  const mecOrder = stageInputs.mecMemoNumber
-    ? formatChronologicOrderWithYear(stageInputs.mecMemoNumber, '')
-    : '';
-  const icOrder = stageInputs.icMemoNumber
-    ? formatChronologicOrderWithYear(stageInputs.icMemoNumber, '')
-    : '';
-
-  const chainParts: string[] = [];
-  if (mecOrder || stageInputs.mecMemoDate) {
-    chainParts.push(`MEC Memo ${mecOrder || '—'} dated ${stageInputs.mecMemoDate || '—'}`);
-  }
-  if (icOrder || stageInputs.icMemoDate) {
-    chainParts.push(`IC Memo ${icOrder || '—'} dated ${stageInputs.icMemoDate || '—'}`);
-  }
-  const chainText =
-    chainParts.length > 0 ? ` following prior recommendations vide ${chainParts.join(' and ')}` : '';
-
-  const acct = ph['#2#'] || '[Account No.]';
-  const branch = ph['#3#'] || '[Branch Name]';
-  const clientName = icMemo.branchProposal?.section10Particulars?.nameOfClient?.trim();
-  const acctLabel = clientName && clientName !== acct ? `${clientName} (${acct})` : acct;
-
-  return (
-    `Pursuant to the approval accorded by the Board of Directors of Sammilito Islami Bank PLC vide Board Memo ${boardOrder} dated ${boardDate}${chainText}, Head Office hereby conveys formal sanction for the full and final Exit with Waiver facility in respect of A/C ${acctLabel} under ${branch} Branch under Bangladesh Bank BRPD Circular Letter No. 23 dated 29.06.2026.` +
-    (stageAi.boardResolutionTerms?.trim()
-      ? `\nApproved Board Resolution Summary: ${stageAi.boardResolutionTerms.trim()}`
-      : '')
-  );
-}
-
-function buildDefaultSanctionCrossVerifiedSummary(
-  icMemo: ResolvedICMemo,
-  stageInputs: StageMemoInputs
-): string {
-  const ph = icMemo.placeholders;
-  const hasCore = Boolean(
-    ph['#2#'] || ph['#25#'] || ph['#27#'] || ph['#7#'] || icMemo.branchProposal
-  );
-  if (!hasCore) return '';
-
-  const lines: string[] = [];
-  lines.push(
-    `1. Facility & Settlement Parameters: Mode of Investment: ${ph['#5#'] || ph['#55#'] || '[Pending]'}; Present Limit: Tk. ${ph['#56#'] || ph['#6#'] || '[Pending]'} Million (Validity: ${ph['#58#'] || '[Pending]'}); NET Outstanding: Tk. ${ph['#25#'] || '[Pending]'} Million as on ${ph['#68#'] || '[Pending]'} (Principal: Tk. ${ph['#7#'] || '—'} M, Charges: Tk. ${ph['#8#'] || '—'} M, Charged Profit: Tk. ${ph['#10#'] || '—'} M, Compensation: Tk. ${ph['#11#'] || '—'} M, Unapplied Comp.: Tk. ${ph['#12#'] || '—'} M).`
-  );
-  lines.push(
-    `2. Sanctioned Waiver & Recovery Position: Approved Settlement/Exit Amount of Tk. ${ph['#27#'] || '[Pending]'} Million (within ${ph['#28#'] || '[Settlement Period pending]'}) against Waiver of Tk. ${ph['#4#'] || '[Pending]'} Million (Max Waiver Considering Cost of Fund: Tk. ${ph['#44#'] || '—'} M; Cost of Fund Surplus/Deficit: Tk. ${ph['#31#'] || '—'} M; Breakup Total: Tk. ${ph['#32#'] || '—'} M), backed by deposited Down Payment of Tk. ${ph['#35#'] || '[Pending]'} Million in A/C ${ph['#36#'] || '[Pending]'}.`
-  );
-  const bp = icMemo.branchProposal;
-  if (icMemo.sourceOfRepayment || bp?.referenceNo || stageInputs.boardMemoNumber) {
-    lines.push(
-      `3. Source of Repayment & Verification Chain: Recovery Till Date: Tk. ${ph['#60#'] || '—'} Million; Overdue: Tk. ${ph['#59#'] || '—'} Million; Repayment Source: ${icMemo.sourceOfRepayment || 'As stated in approved Board proposal'}. Verified against Branch Proposal Ref. ${ph['#64#'] || '—'} dated ${ph['#65#'] || '—'}.`
-    );
-  }
-  return lines.join('\n');
-}
-
-function buildDefaultSanctionSecurityAndCompliance(icMemo: ResolvedICMemo): string {
-  const ph = icMemo.placeholders;
-  const bp = icMemo.branchProposal;
-  if (!ph['#2#'] && !bp) return '';
-
-  const cibDate = ph['#62#'] || bp?.section4CibDate || '[CIB Date pending]';
-  const legalStatus =
-    bp?.section5StatusNote?.trim() ||
-    (bp?.section5Rows && bp.section5Rows.some((r) => r.caseNo || r.typeOfCase)
-      ? `${bp.section5Rows.filter((r) => r.caseNo || r.typeOfCase).length} legal matter(s) recorded for settlement-linked withdrawal`
-      : 'Nil / None reported');
-  const auditStatus =
-    bp?.section6StatusNote?.trim() ||
-    (bp?.section6Rows && bp.section6Rows.some((r) => r.objectionStatus)
-      ? 'Reviewed per IC & CD / Bangladesh Bank regulatory records'
-      : 'Reviewed per Board Memo compliance record');
-  const collateralNote = bp?.section7CollateralNote?.trim();
-  const primaryNote = bp?.section7PrimaryNote?.trim();
-
-  const parts: string[] = [
-    `Security Valuation: Market Value (MV): ${ph['#33#'] || 'As per Board Memo'}; Forced Sale Value (FSV): ${ph['#34#'] || 'As per Board Memo'}${bp?.section7CoveragePct ? `; Coverage: ${bp.section7CoveragePct}` : ''}.`,
-  ];
-  if (primaryNote) parts.push(`Primary Security: ${primaryNote}`);
-  if (collateralNote) parts.push(`Collateral Particulars: ${collateralNote}`);
-  parts.push(`CIB Status (as on ${cibDate}): Verified prior to sanction issuance.`);
-  parts.push(`Legal & Audit Compliance: Legal Status — ${legalStatus}; Audit & Regulatory Position — ${auditStatus}.`);
-  return parts.join('\n');
-}
-
-function buildDefaultSanctionSpecialConditions(
-  icMemo: ResolvedICMemo,
-  stageInputs: StageMemoInputs,
-  stageAi: StageAiSectionsData
-): string {
-  const ph = icMemo.placeholders;
-  const hasCore = Boolean(
-    ph['#2#'] ||
-      ph['#27#'] ||
-      ph['#28#'] ||
-      stageInputs.boardMemoNumber ||
-      stageAi.boardResolutionTerms
-  );
-  if (!hasCore) return '';
-
-  const period = ph['#28#'] || '[Settlement Period]';
-  const settlementAmt = ph['#27#'] || '[Settlement Amount]';
-  const waiverAmt = ph['#4#'] || '[Waiver Amount]';
-  const downPay = ph['#35#'] || '[Down Payment]';
-  const downAc = ph['#36#'] || '[A/C No.]';
-
-  const lines = [
-    `i. The Branch shall ensure full and final realization of the approved Settlement/Exit Amount of Tk. ${settlementAmt} Million on or before ${period} strictly in lump sum, along with adjustment of the deposited Down Payment of Tk. ${downPay} Million held in A/C ${downAc}.`,
-    `ii. The approved Waiver of Tk. ${waiverAmt} Million (together with unapplied/accrued profit up to execution) shall be adjusted from FAD, Head Office against provision held (if any), and the balance gradually by the Branch only after full realization of the settlement amount within ${period}.`,
-    `iii. Final payoff balance shall be computed on the exact date of execution taking into account the up-to-date liability position.`,
-    `iv. Prior to allowing redemption or release of any mortgaged collateral or encashable security (MTDR, margin, scheme deposit, etc.), the Branch shall ensure complete adjustment of all direct, indirect, and non-funded liabilities (L/C, Bank Guarantee, Credit Card, etc.) of the borrower and sister concerns.`,
-    `v. The Profit/Rent rate shall NOT be altered or reduced to 0.00% until full and final adjustment of the investment as approved by Head Office.`,
-    `vi. Upon any failure to adjust within ${period}, this sanction shall automatically stand cancelled and the Branch shall immediately pursue/resume legal recovery proceedings, with all legal expenses borne by the client.`,
-  ];
-  return lines.join('\n');
-}
 
 export function resolveStageMemo(
   docType: StageMemoDocType,
@@ -548,49 +367,16 @@ export function resolveStageMemo(
     sanctionDate: stageInputs.sanctionDate.trim(),
   };
 
-  const hasMecRefOrCase = Boolean(
-    cleanInputs.icMemoNumber ||
-      cleanInputs.icMemoDate ||
-      icMemo.placeholders['#2#'] ||
-      icMemo.branchProposal
-  );
-  const hasBoardRefOrCase = Boolean(
-    cleanInputs.mecMemoNumber ||
-      cleanInputs.mecMemoDate ||
-      hasMecRefOrCase
-  );
-
-  const mecIcText =
-    (stageAi.mecIcRecommendation ?? '').trim() ||
-    (hasMecRefOrCase
-      ? buildMecIcRecommendationText(cleanInputs.icMemoNumber, cleanInputs.icMemoDate)
-      : '');
-
-  const boardMecText =
-    (stageAi.boardMecRecommendation ?? '').trim() ||
-    (hasBoardRefOrCase
-      ? buildBoardMecRecommendationText(cleanInputs.mecMemoNumber, cleanInputs.mecMemoDate)
-      : '');
-
   const stageSections: Record<StageScrutinySectionKey, string> = {
-    mecIcRecommendation: mecIcText,
+    mecIcRecommendation: (stageAi.mecIcRecommendation ?? '').trim(),
     mecExecutiveSummary: (stageAi.mecExecutiveSummary ?? '').trim(),
     mecSamdRecommendation: (stageAi.mecSamdRecommendation ?? '').trim(),
-    boardMecRecommendation: boardMecText,
+    boardMecRecommendation: (stageAi.boardMecRecommendation ?? '').trim(),
     boardProposalRationale: (stageAi.boardProposalRationale ?? '').trim(),
     boardResolutionTerms: (stageAi.boardResolutionTerms ?? '').trim(),
-    sanctionBoardAuthority:
-      (stageAi.sanctionBoardAuthority ?? '').trim() ||
-      buildDefaultSanctionBoardAuthority(icMemo, cleanInputs, stageAi),
-    sanctionCrossVerifiedSummary:
-      (stageAi.sanctionCrossVerifiedSummary ?? '').trim() ||
-      buildDefaultSanctionCrossVerifiedSummary(icMemo, cleanInputs),
-    sanctionSecurityAndCompliance:
-      (stageAi.sanctionSecurityAndCompliance ?? '').trim() ||
-      buildDefaultSanctionSecurityAndCompliance(icMemo),
-    sanctionSpecialConditions:
-      (stageAi.sanctionSpecialConditions ?? '').trim() ||
-      buildDefaultSanctionSpecialConditions(icMemo, cleanInputs, stageAi),
+    sanctionBoardAuthority: (stageAi.sanctionBoardAuthority ?? '').trim(),
+    sanctionCrossVerifiedSummary: (stageAi.sanctionCrossVerifiedSummary ?? '').trim(),
+    sanctionSpecialConditions: (stageAi.sanctionSpecialConditions ?? '').trim(),
   };
 
   return {

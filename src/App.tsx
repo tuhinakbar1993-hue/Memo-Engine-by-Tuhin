@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from 'lucide-react';
+import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { ICMemoPreview } from './components/ICMemoPreview';
 import { LandingScreen } from './components/LandingScreen';
 import { ManualInputsTab } from './components/ManualInputsTab';
@@ -13,9 +13,7 @@ import {
 } from './engines/icMemoEngine';
 import { inspectDocxTemplate, verifyPopulatedDocxBlob } from './exporters/docxTemplateEngine';
 import { generatePdfFromDocxBlob, generateSynchronizedDocxBlob } from './exporters/pdfExporter';
-import { createEmptyBranchProposal } from './parsers/branchProposalParser';
 import {
-  clearDocumentParseCache,
   detectDocumentKeyFromFile,
   parseAccountStatementPdf,
   parseBranchProposalFile,
@@ -25,14 +23,12 @@ import {
   parseOverduePdf,
   parsePartyPerformancePdf,
   prepareBranchProposalSource,
-  prepareGenericDocumentSource,
   warmBranchProposalSource,
 } from './parsers/documentParsers';
 import type {
   AiSectionsData,
   AppliedSyncState,
   BatchScrutinyState,
-  BranchProposalData,
   BranchProposalSource,
   DocumentKey,
   DocumentUploadMeta,
@@ -42,29 +38,13 @@ import type {
   MemoTabKey,
   MemoTemplateRecord,
   ScrutinySectionKey,
-  Section10BankDirectorRow,
-  Section10DirectorRow,
-  Section10Particulars,
-  Section11Row,
-  Section3Row,
-  Section4Row,
-  Section5Row,
-  Section6Row,
-  Section7PrimaryRow,
-  Section7ValuationRow,
-  Section9Row,
   StageAiSectionsData,
   StageBatchScrutinyState,
   StageMemoDocType,
   StageMemoInputs,
   StageScrutinySectionKey,
-  StageUploadedSourceMeta,
 } from './types/memo';
-import {
-  clearCentralCaseState,
-  loadCentralCaseState,
-  saveCentralCaseState,
-} from './utils/caseStorage';
+import { loadCentralCaseState, saveCentralCaseState } from './utils/caseStorage';
 import {
   deleteTemplateRecord,
   loadAllTemplateRecords,
@@ -292,16 +272,11 @@ export default function App() {
   const [stageBatchScrutiny, setStageBatchScrutiny] = useState<StageBatchScrutinyState>(
     INITIAL_STAGE_BATCH_SCRUTINY
   );
-  const [stageUploadedSources, setStageUploadedSources] = useState<
-    Partial<Record<StageMemoDocType, StageUploadedSourceMeta>>
-  >({});
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const serverCachedSourceIdRef = useRef<string | null>(null);
-  const stageSourceFilesRef = useRef<Partial<Record<StageMemoDocType, File | null>>>({});
   const batchAbortRef = useRef<AbortController | null>(null);
   const stageBatchAbortRef = useRef<AbortController | null>(null);
   const caseDirtyRef = useRef(false);
@@ -316,7 +291,6 @@ export default function App() {
     stageInputs: StageMemoInputs;
     stageAiSections: StageAiSectionsData;
     stageManualEditedSections: Partial<Record<StageScrutinySectionKey, boolean>>;
-    stageUploadedSources: Partial<Record<StageMemoDocType, StageUploadedSourceMeta>>;
   }>({
     extractedDocs: INITIAL_EXTRACTED_DOCS,
     manualInputs: INITIAL_MANUAL_INPUTS,
@@ -326,7 +300,6 @@ export default function App() {
     stageInputs: INITIAL_STAGE_INPUTS,
     stageAiSections: INITIAL_STAGE_AI_SECTIONS,
     stageManualEditedSections: {},
-    stageUploadedSources: {},
   });
   const docMetasRef = useRef<Record<DocumentKey, DocumentUploadMeta>>(INITIAL_DOC_METAS);
 
@@ -378,7 +351,6 @@ export default function App() {
       stageInputs,
       stageAiSections,
       stageManualEditedSections,
-      stageUploadedSources,
     };
   }, [
     extractedDocs,
@@ -389,7 +361,6 @@ export default function App() {
     stageInputs,
     stageAiSections,
     stageManualEditedSections,
-    stageUploadedSources,
   ]);
 
   useEffect(() => {
@@ -530,35 +501,12 @@ export default function App() {
     setStageManualEditedSections(next);
   };
 
-  const setStageUploadedSourcesSync = (
-    updater:
-      | Partial<Record<StageMemoDocType, StageUploadedSourceMeta>>
-      | ((
-          prev: Partial<Record<StageMemoDocType, StageUploadedSourceMeta>>
-        ) => Partial<Record<StageMemoDocType, StageUploadedSourceMeta>>)
-  ) => {
-    caseDirtyRef.current = true;
-    const next =
-      typeof updater === 'function' ? updater(caseRef.current.stageUploadedSources) : updater;
-    caseRef.current = { ...caseRef.current, stageUploadedSources: next };
-    setStageUploadedSources(next);
-  };
-
   useEffect(() => {
     void loadAllTemplateRecords().then((loaded) => {
       setTemplates(loaded);
     });
     void loadCentralCaseState().then((saved) => {
       if (!saved || caseDirtyRef.current) return;
-      const cleanStageSources: Partial<Record<StageMemoDocType, StageUploadedSourceMeta>> = {};
-      if (saved.stageUploadedSources) {
-        for (const dt of ['mec', 'board', 'sanction'] as StageMemoDocType[]) {
-          const s = saved.stageUploadedSources[dt];
-          if (s) {
-            cleanStageSources[dt] = { ...s, scrutinizing: false, stage: null };
-          }
-        }
-      }
       const hydrated = {
         extractedDocs: { ...INITIAL_EXTRACTED_DOCS, ...(saved.extractedDocs || {}) },
         manualInputs: { ...INITIAL_MANUAL_INPUTS, ...(saved.manualInputs || {}) },
@@ -568,7 +516,6 @@ export default function App() {
         stageInputs: { ...INITIAL_STAGE_INPUTS, ...(saved.stageInputs || {}) },
         stageAiSections: { ...INITIAL_STAGE_AI_SECTIONS, ...(saved.stageAiSections || {}) },
         stageManualEditedSections: saved.stageManualEditedSections || {},
-        stageUploadedSources: cleanStageSources,
       };
       caseRef.current = hydrated;
       setExtractedDocs(hydrated.extractedDocs);
@@ -579,7 +526,6 @@ export default function App() {
       setStageInputs(hydrated.stageInputs);
       setStageAiSections(hydrated.stageAiSections);
       setStageManualEditedSections(hydrated.stageManualEditedSections);
-      setStageUploadedSources(hydrated.stageUploadedSources);
 
       if (saved.docUploadedFlags) {
         setDocMetasSync((prev) => {
@@ -893,18 +839,6 @@ export default function App() {
       sectionSummaries: latestMemo.sectionSummaries,
       icMemoFinalized: latestMemo,
       icMemoAiSections: latest.aiSections,
-      mecMemoFinalized: resolveStageMemo(
-        'mec',
-        latestMemo,
-        latest.stageInputs,
-        latest.stageAiSections
-      ),
-      boardMemoFinalized: resolveStageMemo(
-        'board',
-        latestMemo,
-        latest.stageInputs,
-        latest.stageAiSections
-      ),
       extractedSummaries: {
         outstanding: latest.extractedDocs.outstanding,
         partyPerformance: latest.extractedDocs.partyPerformance,
@@ -1366,16 +1300,10 @@ export default function App() {
   };
 
   const fetchStageEndpoint = async (
-    docType: StageMemoDocType,
     url: string,
     payload: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<Response> => {
-    const stageSourceFile = stageSourceFilesRef.current[docType];
-    if (stageSourceFile) {
-      const source = await prepareGenericDocumentSource(stageSourceFile, `stage_${docType}`);
-      return fetchWithSourceCache(url, payload, source, signal);
-    }
     if (branchProposalFile) {
       const source = await prepareBranchProposalSource(branchProposalFile);
       return fetchWithSourceCache(url, payload, source, signal);
@@ -1388,427 +1316,15 @@ export default function App() {
     });
   };
 
-  const handleClearStageSource = (docType: StageMemoDocType) => {
-    stageSourceFilesRef.current[docType] = null;
-    setStageUploadedSourcesSync((prev) => {
-      const next = { ...prev };
-      delete next[docType];
-      return next;
-    });
-    void persistCentralCaseNow(true);
-  };
-
-  const handleUploadStageSource = async (docType: StageMemoDocType, file: File) => {
-    stageSourceFilesRef.current[docType] = file;
-    setAiError(null);
-    setStageUploadedSourcesSync((prev) => ({
-      ...prev,
-      [docType]: {
-        docType,
-        uploaded: false,
-        fileName: file.name,
-        fileSize: file.size,
-        uploadedAt: null,
-        scrutinizing: true,
-        stage: 'Preparing document...',
-        error: null,
-        missingOrInconsistentNotes: [],
-      },
-    }));
-
-    try {
-      const source = await prepareGenericDocumentSource(file, `stage_${docType}`, (stageText) => {
-        setStageUploadedSourcesSync((prev) => ({
-          ...prev,
-          [docType]: {
-            ...(prev[docType] || {
-              docType,
-              uploaded: false,
-              fileName: file.name,
-              fileSize: file.size,
-              uploadedAt: null,
-              scrutinizing: true,
-              error: null,
-              missingOrInconsistentNotes: [],
-            }),
-            stage: stageText,
-          },
-        }));
-      });
-
-      setStageUploadedSourcesSync((prev) => ({
-        ...prev,
-        [docType]: {
-          ...prev[docType]!,
-          stage: 'Scrutinizing and extracting all details through Gemini AI...',
-        },
-      }));
-
-      const currentMemo = resolveICMemo(
-        caseRef.current.extractedDocs,
-        caseRef.current.manualInputs,
-        caseRef.current.aiSections,
-        caseRef.current.overrides,
-        caseRef.current.manualEditedSections
-      );
-
-      const response = await fetch('/api/gemini/extract-stage-source', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          docType,
-          source,
-          existingStageInputs: caseRef.current.stageInputs,
-          existingPlaceholders: currentMemo.placeholders,
-        }),
-      });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(
-          errBody.error || `Failed to scrutinize uploaded memo (${response.status}).`
-        );
-      }
-
-      const data = (await response.json()) as {
-        extracted?: Record<string, unknown>;
-        sourceId?: string;
-        fileName?: string;
-      };
-      if (data.sourceId) {
-        serverCachedSourceIdRef.current = data.sourceId;
-      }
-
-      const ex = (data.extracted || {}) as Record<string, unknown>;
-      const exStageInputs = (ex.extractedStageInputs || {}) as Record<string, string>;
-      const exPlaceholders = (ex.placeholders || {}) as Record<string, string>;
-      const exNarratives = (ex.narratives || {}) as Record<string, string>;
-      const exStageDrafts = (ex.stageDrafts || {}) as Record<string, string>;
-      const missingNotes = Array.isArray(ex.missingOrInconsistentNotes)
-        ? (ex.missingOrInconsistentNotes as unknown[])
-            .map((x) => String(x || '').trim())
-            .filter(Boolean)
-        : [];
-
-      // 1. Update Stage Inputs where currently blank
-      setStageInputsSync((prev) => ({
-        icMemoNumber: prev.icMemoNumber.trim() || String(exStageInputs.icMemoNumber ?? '').trim(),
-        icMemoDate: prev.icMemoDate.trim() || String(exStageInputs.icMemoDate ?? '').trim(),
-        mecMemoNumber:
-          prev.mecMemoNumber.trim() || String(exStageInputs.mecMemoNumber ?? '').trim(),
-        mecMemoDate: prev.mecMemoDate.trim() || String(exStageInputs.mecMemoDate ?? '').trim(),
-        boardMemoNumber:
-          prev.boardMemoNumber.trim() || String(exStageInputs.boardMemoNumber ?? '').trim(),
-        boardMemoDate:
-          prev.boardMemoDate.trim() || String(exStageInputs.boardMemoDate ?? '').trim(),
-        sanctionRefNumber: prev.sanctionRefNumber,
-        sanctionDate: prev.sanctionDate,
-      }));
-
-      // 2. Populate Manual Inputs & Overrides from extracted placeholders without overwriting user-entered values
-      const manualKeyByCode: Record<string, keyof ManualInputsData> = {
-        '#1#': 'proposalDate',
-        '#4#': 'waiverAmount',
-        '#27#': 'settlementAmount',
-        '#28#': 'settlementPeriod',
-        '#45#': 'waiverRecClientBranch',
-        '#47#': 'waiverRecHO',
-      };
-
-      setManualInputsSync((prev) => {
-        const next = { ...prev };
-        for (const [code, field] of Object.entries(manualKeyByCode)) {
-          const extractedVal = String(exPlaceholders[code] ?? '').trim();
-          if (!next[field].trim() && extractedVal) {
-            next[field] = extractedVal;
-          }
-        }
-        const extractedSor = String(ex.sourceOfRepayment ?? '').trim();
-        if (!next.sourceOfRepayment.trim() && extractedSor) {
-          next.sourceOfRepayment = extractedSor;
-        }
-        return next;
-      });
-
-      setOverridesSync((prev) => {
-        const next = { ...prev };
-        for (const [code, rawVal] of Object.entries(exPlaceholders)) {
-          if (code === '#32#' || code === '#42#' || code === '#44#') continue;
-          if (manualKeyByCode[code]) continue;
-          const val = String(rawVal ?? '').trim();
-          if (!val) continue;
-          const existingResolved = currentMemo.placeholders[code];
-          if ((next[code] === undefined || next[code] === '') && !existingResolved) {
-            next[code] = val;
-          }
-        }
-        return next;
-      });
-
-      // 3. Merge structured Branch Proposal tables & details into extractedDocs.branchProposal
-      setExtractedDocsSync((prev) => {
-        const baseBp: BranchProposalData = prev.branchProposal
-          ? {
-              ...prev.branchProposal,
-              section10Particulars: { ...prev.branchProposal.section10Particulars },
-            }
-          : createEmptyBranchProposal();
-
-        const pickStr = (curr: string, incoming: unknown): string =>
-          curr.trim() ? curr : String(incoming ?? '').trim();
-
-        const exParticulars = (ex.section10Particulars || {}) as Partial<Section10Particulars>;
-        const mergedParticulars: Section10Particulars = { ...baseBp.section10Particulars };
-        for (const k of Object.keys(mergedParticulars) as Array<keyof Section10Particulars>) {
-          mergedParticulars[k] = pickStr(mergedParticulars[k], exParticulars[k]);
-        }
-
-        const pickRows = <T,>(curr: T[], incoming: unknown): T[] =>
-          curr.length > 0 ? curr : Array.isArray(incoming) ? (incoming as T[]) : curr;
-
-        const nextBp: BranchProposalData = {
-          ...baseBp,
-          referenceNo: pickStr(baseBp.referenceNo, exPlaceholders['#64#']),
-          proposalDate: pickStr(baseBp.proposalDate, exPlaceholders['#65#']),
-          branchName: pickStr(baseBp.branchName, exPlaceholders['#3#']),
-          accountNo: pickStr(baseBp.accountNo, exPlaceholders['#2#']),
-          limitOriginal: pickStr(baseBp.limitOriginal, exPlaceholders['#6#']),
-          limitRSD: pickStr(baseBp.limitRSD, ex.limitRSD),
-          securityMV: pickStr(baseBp.securityMV, exPlaceholders['#33#']),
-          securityFSV: pickStr(baseBp.securityFSV, exPlaceholders['#34#']),
-          justificationText: pickStr(baseBp.justificationText, exPlaceholders['#51#']),
-          previousBoardDecisions: pickStr(
-            baseBp.previousBoardDecisions,
-            ex.previousBoardDecisions
-          ),
-          natureOfBusiness: pickStr(baseBp.natureOfBusiness, exPlaceholders['#54#']),
-          sec2Limit: pickStr(baseBp.sec2Limit, exPlaceholders['#56#']),
-          sec2Validity: pickStr(baseBp.sec2Validity, exPlaceholders['#58#']),
-          sec2Overdue: pickStr(baseBp.sec2Overdue, exPlaceholders['#59#']),
-          sec2Recovery: pickStr(baseBp.sec2Recovery, exPlaceholders['#60#']),
-          sec2Remarks: pickStr(baseBp.sec2Remarks, exNarratives.sec2Remarks),
-          section3Rows: pickRows<Section3Row>(baseBp.section3Rows, ex.section3Rows),
-          section4CibDate: pickStr(
-            baseBp.section4CibDate,
-            ex.section4CibDate || exPlaceholders['#62#']
-          ),
-          section4Rows: pickRows<Section4Row>(baseBp.section4Rows, ex.section4Rows),
-          section5StatusNote: pickStr(baseBp.section5StatusNote, ex.section5StatusNote),
-          section5Rows: pickRows<Section5Row>(baseBp.section5Rows, ex.section5Rows),
-          section6StatusNote: pickStr(baseBp.section6StatusNote, ex.section6StatusNote),
-          section6Rows: pickRows<Section6Row>(baseBp.section6Rows, ex.section6Rows),
-          section7PrimaryNote: pickStr(baseBp.section7PrimaryNote, ex.section7PrimaryNote),
-          section7PrimaryRows: pickRows<Section7PrimaryRow>(
-            baseBp.section7PrimaryRows,
-            ex.section7PrimaryRows
-          ),
-          section7PrimaryTotal: pickStr(baseBp.section7PrimaryTotal, ex.section7PrimaryTotal),
-          section7CollateralNote: pickStr(
-            baseBp.section7CollateralNote,
-            ex.section7CollateralNote
-          ),
-          section7CollateralSchedules:
-            baseBp.section7CollateralSchedules.length > 0
-              ? baseBp.section7CollateralSchedules
-              : Array.isArray(ex.section7CollateralSchedules)
-                ? (ex.section7CollateralSchedules as string[]).filter(Boolean)
-                : baseBp.section7CollateralSchedules,
-          section7ValuationRows: pickRows<Section7ValuationRow>(
-            baseBp.section7ValuationRows,
-            ex.section7ValuationRows
-          ),
-          section7CoveragePct: pickStr(baseBp.section7CoveragePct, ex.section7CoveragePct),
-          section7Others: pickStr(baseBp.section7Others, ex.section7Others),
-          section8SourceOfRepayment: pickStr(
-            baseBp.section8SourceOfRepayment,
-            ex.sourceOfRepayment
-          ),
-          section9Rows: pickRows<Section9Row>(baseBp.section9Rows, ex.section9Rows),
-          section10Particulars: mergedParticulars,
-          section10Directors: pickRows<Section10DirectorRow>(
-            baseBp.section10Directors,
-            ex.section10Directors
-          ),
-          section10BankDirectors: pickRows<Section10BankDirectorRow>(
-            baseBp.section10BankDirectors,
-            ex.section10BankDirectors
-          ),
-          section11FinancialsNote: pickStr(
-            baseBp.section11FinancialsNote,
-            ex.section11FinancialsNote
-          ),
-          section11Rows: pickRows<Section11Row>(baseBp.section11Rows, ex.section11Rows),
-        };
-
-        return { ...prev, branchProposal: nextBp };
-      });
-
-      // 4. Populate carried-forward IC narratives where not manually edited
-      setAiSectionsSync((prev) => {
-        const next = { ...prev };
-        const edited = caseRef.current.manualEditedSections;
-        const setIfEmpty = (key: keyof AiSectionsData, val: string) => {
-          const trimmed = val.trim();
-          if (!trimmed) return;
-          if (!edited[key as ScrutinySectionKey] && (!next[key] || String(next[key]).trim() === '')) {
-            (next[key] as string | null) = trimmed;
-          }
-        };
-        setIfEmpty('justification', String(exPlaceholders['#51#'] ?? ''));
-        setIfEmpty('sec1NatureOfBusiness', String(exPlaceholders['#54#'] ?? ''));
-        setIfEmpty('sec8SourceOfRepayment', String(ex.sourceOfRepayment ?? ''));
-        setIfEmpty('clientPrayer', String(exNarratives.clientPrayer ?? ''));
-        setIfEmpty('branchVisit', String(exNarratives.branchVisit ?? ''));
-        setIfEmpty('sec13BranchRecommendation', String(exNarratives.sec13BranchRecommendation ?? ''));
-        setIfEmpty('sec14IccdRecommendation', String(exNarratives.sec14IccdRecommendation ?? ''));
-        setIfEmpty('samdObservation', String(exNarratives.samdObservation ?? ''));
-        return next;
-      });
-
-      // 5. Populate Stage AI sections from extracted stageDrafts (respecting manual edits)
-      setStageAiSectionsSync((prev) => {
-        const next = { ...prev };
-        const edited = caseRef.current.stageManualEditedSections;
-        for (const k of Object.keys(INITIAL_STAGE_AI_SECTIONS) as StageScrutinySectionKey[]) {
-          const draft = String(exStageDrafts[k] ?? '').trim();
-          if (draft && !edited[k]) {
-            next[k] = draft;
-          }
-        }
-        return next;
-      });
-
-      const uploadedAt = new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-      setStageUploadedSourcesSync((prev) => ({
-        ...prev,
-        [docType]: {
-          docType,
-          uploaded: true,
-          fileName: file.name,
-          fileSize: file.size,
-          uploadedAt,
-          scrutinizing: false,
-          stage: null,
-          error: null,
-          missingOrInconsistentNotes: missingNotes,
-        },
-      }));
-
-      syncAppliedSnapshotFromRef();
-      void persistCentralCaseNow(true);
-      setApplyNotice(
-        `Extracted & scrutinized ${file.name} (${uploadedAt}) — data carried forward into ${docType.toUpperCase()} output.`
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to extract uploaded memo.';
-      setStageUploadedSourcesSync((prev) => ({
-        ...prev,
-        [docType]: {
-          docType,
-          uploaded: false,
-          fileName: file.name,
-          fileSize: file.size,
-          uploadedAt: null,
-          scrutinizing: false,
-          stage: null,
-          error: msg,
-          missingOrInconsistentNotes: [],
-        },
-      }));
-    }
-  };
-
-  const handleClearAllData = () => {
-    batchAbortRef.current?.abort();
-    batchAbortRef.current = null;
-    stageBatchAbortRef.current?.abort();
-    stageBatchAbortRef.current = null;
-    if (persistTimerRef.current !== null) {
-      window.clearTimeout(persistTimerRef.current);
-      persistTimerRef.current = null;
-    }
-
-    caseDirtyRef.current = true;
-    clearDocumentParseCache();
-    void clearCentralCaseState();
-
-    stageSourceFilesRef.current = {};
-    serverCachedSourceIdRef.current = null;
-    setBranchProposalFile(null);
-
-    docMetasRef.current = INITIAL_DOC_METAS;
-    setDocMetas(INITIAL_DOC_METAS);
-
-    const emptyCaseState = {
-      extractedDocs: INITIAL_EXTRACTED_DOCS,
-      manualInputs: INITIAL_MANUAL_INPUTS,
-      aiSections: INITIAL_AI_SECTIONS,
-      overrides: {},
-      manualEditedSections: {},
-      stageInputs: INITIAL_STAGE_INPUTS,
-      stageAiSections: INITIAL_STAGE_AI_SECTIONS,
-      stageManualEditedSections: {},
-      stageUploadedSources: {},
-    };
-    caseRef.current = emptyCaseState;
-
-    setExtractedDocs(INITIAL_EXTRACTED_DOCS);
-    setManualInputs(INITIAL_MANUAL_INPUTS);
-    setAiSections(INITIAL_AI_SECTIONS);
-    setOverrides({});
-    setManualEditedSections({});
-    setStageInputs(INITIAL_STAGE_INPUTS);
-    setStageAiSections(INITIAL_STAGE_AI_SECTIONS);
-    setStageManualEditedSections({});
-    setStageUploadedSources({});
-
-    setScrutinizingSection(null);
-    setScrutinizingStageSection(null);
-    setBatchScrutiny(INITIAL_BATCH_SCRUTINY);
-    setStageBatchScrutiny(INITIAL_STAGE_BATCH_SCRUTINY);
-    setBatchProgress({ active: false, total: 0, completed: 0 });
-    setAiError(null);
-
-    const emptyMemo = resolveICMemo(
-      INITIAL_EXTRACTED_DOCS,
-      INITIAL_MANUAL_INPUTS,
-      INITIAL_AI_SECTIONS,
-      {},
-      {}
-    );
-    setAppliedSnapshot((prev) => ({
-      appliedAt: null,
-      version: prev.version + 1,
-      memo: emptyMemo,
-      stageInputs: INITIAL_STAGE_INPUTS,
-      stageAiSections: INITIAL_STAGE_AI_SECTIONS,
-    }));
-    setHasPendingChanges(false);
-    setApplySignal((s) => s + 1);
-    setShowClearConfirm(false);
-    setApplyNotice(
-      'All case data cleared across all tabs. Saved .docx templates and software configurations remain intact.'
-    );
-  };
-
   const handleScrutinizeStageSection = async (
     docType: StageMemoDocType,
     section: StageScrutinySectionKey,
     forceOverwrite = false
   ) => {
     if (stageBatchScrutiny.running) return;
-    if (
-      !branchProposalFile &&
-      !stageSourceFilesRef.current[docType] &&
-      !stageUploadedSources[docType]?.uploaded &&
-      !caseRef.current.extractedDocs.branchProposal &&
-      !resolvedICMemo.placeholders['#2#']
-    ) {
+    if (!branchProposalFile && !caseRef.current.extractedDocs.branchProposal && !resolvedICMemo.placeholders['#2#']) {
       setAiError(
-        'Upload the Branch Proposal (on Manual Inputs) or the prior completed memo on this tab first so AI can scrutinize and populate this stage.'
+        'Upload the Branch Proposal and supporting documents on the Manual Inputs tab first so AI can scrutinize and populate this stage.'
       );
       return;
     }
@@ -1821,15 +1337,11 @@ export default function App() {
 
     try {
       const context = buildScrutinyContext();
-      const response = await fetchStageEndpoint(
+      const response = await fetchStageEndpoint('/api/gemini/scrutinize-stage-section', {
         docType,
-        '/api/gemini/scrutinize-stage-section',
-        {
-          docType,
-          section,
-          context,
-        }
-      );
+        section,
+        context,
+      });
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => ({}));
@@ -1898,15 +1410,11 @@ export default function App() {
 
     try {
       const context = buildScrutinyContext();
-      const response = await fetchStageEndpoint(
+      const response = await fetchStageEndpoint('/api/gemini/scrutinize-stage-section', {
         docType,
-        '/api/gemini/scrutinize-stage-section',
-        {
-          docType,
-          section,
-          context,
-        }
-      );
+        section,
+        context,
+      });
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => ({}));
@@ -1969,15 +1477,9 @@ export default function App() {
 
   const handleScrutinizeStageAll = async (docType: StageMemoDocType) => {
     if (stageBatchScrutiny.running || scrutinizingStageSection !== null) return;
-    if (
-      !branchProposalFile &&
-      !stageSourceFilesRef.current[docType] &&
-      !stageUploadedSources[docType]?.uploaded &&
-      !caseRef.current.extractedDocs.branchProposal &&
-      !resolvedICMemo.placeholders['#2#']
-    ) {
+    if (!branchProposalFile && !caseRef.current.extractedDocs.branchProposal && !resolvedICMemo.placeholders['#2#']) {
       setAiError(
-        'Upload the Branch Proposal (on Manual Inputs) or the prior completed memo on this tab first so AI can scrutinize and populate this stage.'
+        'Upload the Branch Proposal and supporting documents on the Manual Inputs tab first so AI can scrutinize and populate this stage.'
       );
       return;
     }
@@ -2028,7 +1530,6 @@ export default function App() {
     try {
       const context = buildScrutinyContext();
       const response = await fetchStageEndpoint(
-        docType,
         '/api/gemini/scrutinize-stage-all',
         { docType, sections: targetSections, context },
         controller.signal
@@ -2290,22 +1791,11 @@ export default function App() {
           </nav>
 
           {/* Zone 3: Primary Actions */}
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setShowClearConfirm(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              title="Clear all case data across all tabs to start a new case"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Clear All Data</span>
-              <span className="md:hidden">Clear</span>
-            </button>
-
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={handleApplyAllChanges}
-              className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 hasPendingChanges
                   ? 'text-amber-950 bg-amber-100 hover:bg-amber-200 border-amber-300'
                   : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
@@ -2316,7 +1806,7 @@ export default function App() {
             </button>
 
             {activeTab !== 'manual' ? (
-              <div className="hidden sm:flex items-center gap-2">
+              <>
                 <button
                   type="button"
                   onClick={() => void handleDownloadDocx(activeTab as MemoDocType)}
@@ -2333,12 +1823,12 @@ export default function App() {
                 >
                   {downloadingPdf ? 'Rendering PDF...' : 'Download .pdf'}
                 </button>
-              </div>
+              </>
             ) : (
               <button
                 type="button"
                 onClick={() => setActiveTab('ic')}
-                className="hidden sm:inline-flex px-4 py-2 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="px-4 py-2 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 IC Memo
               </button>
@@ -2394,7 +1884,6 @@ export default function App() {
             onRemoveTemplate={handleRemoveTemplate}
             onApplyAllChanges={handleApplyAllChanges}
             hasPendingChanges={hasPendingChanges}
-            onOpenClearConfirm={() => setShowClearConfirm(true)}
           />
         )}
 
@@ -2462,10 +1951,6 @@ export default function App() {
             hasPendingChanges={hasPendingChanges}
             lastAppliedAt={appliedSnapshot.appliedAt}
             applySignal={applySignal}
-            stageSourceMeta={stageUploadedSources.mec ?? null}
-            onUploadStageSource={handleUploadStageSource}
-            onClearStageSource={handleClearStageSource}
-            onOpenClearConfirm={() => setShowClearConfirm(true)}
           />
         )}
 
@@ -2502,10 +1987,6 @@ export default function App() {
             hasPendingChanges={hasPendingChanges}
             lastAppliedAt={appliedSnapshot.appliedAt}
             applySignal={applySignal}
-            stageSourceMeta={stageUploadedSources.board ?? null}
-            onUploadStageSource={handleUploadStageSource}
-            onClearStageSource={handleClearStageSource}
-            onOpenClearConfirm={() => setShowClearConfirm(true)}
           />
         )}
 
@@ -2542,66 +2023,9 @@ export default function App() {
             hasPendingChanges={hasPendingChanges}
             lastAppliedAt={appliedSnapshot.appliedAt}
             applySignal={applySignal}
-            stageSourceMeta={stageUploadedSources.sanction ?? null}
-            onUploadStageSource={handleUploadStageSource}
-            onClearStageSource={handleClearStageSource}
-            onOpenClearConfirm={() => setShowClearConfirm(true)}
           />
         )}
       </main>
-
-      {/* Clear All Data Confirmation Modal */}
-      {showClearConfirm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="clear-all-modal-title"
-        >
-          <div className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-50 text-rose-700 shrink-0">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div className="space-y-1.5">
-                <h3
-                  id="clear-all-modal-title"
-                  className="font-display text-base font-bold text-slate-900"
-                >
-                  Clear All Case Data?
-                </h3>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  This will reset all uploaded case documents, prior stage memo uploads, manual
-                  inputs, field overrides, and AI-generated content across Manual Inputs, IC Memo,
-                  MEC Memo, Board Memo, and Sanction so you can start a fresh case.
-                </p>
-                <p className="text-xs text-emerald-800 font-medium">
-                  Your saved .docx document templates, default bank formats, and software
-                  configurations will NOT be affected.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowClearConfirm(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleClearAllData}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Yes, Clear All Data</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

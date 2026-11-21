@@ -1,5 +1,4 @@
 import JSZip from 'jszip';
-import { formatChronologicOrderWithYear } from '../engines/icMemoEngine';
 import type {
   MemoDocType,
   MemoTemplateRecord,
@@ -400,15 +399,12 @@ export function buildTemplateTokenMap(
     sec7OthersNote: memo.sec7OthersNote || '',
     icMemoNumber: si?.icMemoNumber || '',
     icMemoNo: si?.icMemoNumber || '',
-    icOrderWithYear: si?.icMemoNumber ? formatChronologicOrderWithYear(si.icMemoNumber, '') : '',
     icMemoDate: si?.icMemoDate || '',
     mecMemoNumber: si?.mecMemoNumber || '',
     mecMemoNo: si?.mecMemoNumber || '',
-    mecOrderWithYear: si?.mecMemoNumber ? formatChronologicOrderWithYear(si.mecMemoNumber, '') : '',
     mecMemoDate: si?.mecMemoDate || '',
     boardMemoNumber: si?.boardMemoNumber || '',
     boardMemoNo: si?.boardMemoNumber || '',
-    boardOrderWithYear: si?.boardMemoNumber ? formatChronologicOrderWithYear(si.boardMemoNumber, '') : '',
     boardMemoDate: si?.boardMemoDate || '',
     sanctionRefNumber: si?.sanctionRefNumber || '',
     sanctionNo: si?.sanctionRefNumber || '',
@@ -421,8 +417,6 @@ export function buildTemplateTokenMap(
     boardResolutionTerms: ss?.boardResolutionTerms || '',
     sanctionBoardAuthority: ss?.sanctionBoardAuthority || '',
     sanctionCrossVerifiedSummary: ss?.sanctionCrossVerifiedSummary || '',
-    sanctionSecurityAndCompliance: ss?.sanctionSecurityAndCompliance || '',
-    securityAndCompliance: ss?.sanctionSecurityAndCompliance || '',
     sanctionSpecialConditions: ss?.sanctionSpecialConditions || '',
   };
 
@@ -516,9 +510,9 @@ function isSectionBoundaryText(text: string): boolean {
   ) {
     return true;
   }
-  if (/^(?:1\d|2[0-5]|[1-9])\s*[.)]\s*[A-Za-z]/.test(t)) return true;
+  if (/^(?:1[0-7]|[1-9])\s*[.)]\s*[A-Za-z]/.test(t)) return true;
   if (
-    /^(?:Nature\s+of\s+Business|Liability\s+Position\s+of|Liability\s+of\s+the\s+Client|CIB\s+Status|Legal\s+Action\s+Status|Audit,\s*Compliance|Security\s*:|Source\s+of\s+Repayment|Sequence\s+of\s+Head\s+Office|Brief\s+Particulars\s+of\s+The\s+Client|Financials\s+of\s+The\s+Client|Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer|Branch\s+Visit\s+Report|Recommendation\s+of\s+(?:the\s+)?(?:Investment\s+Committee|Management\s+Executive\s+Committee|Branch)|Management\s+Executive\s+Committee\s*\(?MEC\)?\s+Recommendation|Executive\s+Appraisal\s*&\s*Waiver\s+Rationale|Board\s+Memorandum\s+Summary|Proposed\s+Board\s+Resolution|Board\s+Approval\s+Reference|AI\s+Cross-Verified\s+Facility|Collateral\s+Security,\s*Legal|Operative\s+Terms,\s*Conditions|Branch\s+Recommendation|Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)|Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?|Particulars\s+of\s+(?:the\s+)?(?:(?:Proposed|Sanctioned)\s+)?Facility|Special\s+Term\(s\))/i.test(
+    /^(?:Nature\s+of\s+Business|Liability\s+Position\s+of|Liability\s+of\s+the\s+Client|CIB\s+Status|Legal\s+Action\s+Status|Audit,\s*Compliance|Security\s*:|Source\s+of\s+Repayment|Sequence\s+of\s+Head\s+Office|Brief\s+Particulars\s+of\s+The\s+Client|Financials\s+of\s+The\s+Client|Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer|Branch\s+Visit\s+Report|Recommendation\s+of\s+(?:the\s+)?(?:Investment\s+Committee|Management\s+Executive\s+Committee|Branch)|Executive\s+Appraisal\s*&\s*Waiver\s+Rationale|Board\s+Memorandum\s+Summary|Proposed\s+Board\s+Resolution|Board\s+Approval\s+Reference|AI\s+Cross-Verified\s+Facility|Operative\s+Terms,\s*Conditions|Branch\s+Recommendation|Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)|Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?|Particulars\s+of\s+(?:the\s+)?(?:Proposed\s+)?Facility|Special\s+Term\(s\))/i.test(
       t
     )
   ) {
@@ -1769,12 +1763,11 @@ function applyStructuralPopulations(
         else if (/Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i.test(label)) trySet(nonEmpty(ss.mecIcRecommendation));
         else if (/Executive\s+Appraisal/i.test(label)) trySet(nonEmpty(ss.mecExecutiveSummary));
         else if (/Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i.test(label)) trySet(nonEmpty(ss.mecSamdRecommendation));
-        else if (/(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*\(?MEC\)?\s+Recommendation)/i.test(label)) trySet(nonEmpty(ss.boardMecRecommendation));
+        else if (/Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i.test(label)) trySet(nonEmpty(ss.boardMecRecommendation));
         else if (/Board\s+Memorandum\s+Summary/i.test(label)) trySet(nonEmpty(ss.boardProposalRationale));
         else if (/Proposed\s+Board\s+Resolution/i.test(label)) trySet(nonEmpty(ss.boardResolutionTerms));
         else if (/Board\s+Approval\s+Reference/i.test(label)) trySet(nonEmpty(ss.sanctionBoardAuthority));
         else if (/AI\s+Cross-Verified\s+Facility/i.test(label)) trySet(nonEmpty(ss.sanctionCrossVerifiedSummary));
-        else if (/Collateral\s+Security/i.test(label)) trySet(nonEmpty(ss.sanctionSecurityAndCompliance));
         else if (/Operative\s+Terms/i.test(label)) trySet(nonEmpty(ss.sanctionSpecialConditions));
       }
     }
@@ -1854,16 +1847,11 @@ function applyStructuralPopulations(
     ensureHeadingValue(ss.mecIcRecommendation, /Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i, true);
     ensureHeadingValue(ss.mecExecutiveSummary, /Executive\s+Appraisal\s*&\s*Waiver\s+Rationale/i, true);
     ensureHeadingValue(ss.mecSamdRecommendation, /Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i, true);
-    ensureHeadingValue(
-      ss.boardMecRecommendation,
-      /(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*\(?MEC\)?\s+Recommendation)/i,
-      true
-    );
+    ensureHeadingValue(ss.boardMecRecommendation, /Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i, true);
     ensureHeadingValue(ss.boardProposalRationale, /Board\s+Memorandum\s+Summary/i, true);
     ensureHeadingValue(ss.boardResolutionTerms, /Proposed\s+Board\s+Resolution/i, true);
     ensureHeadingValue(ss.sanctionBoardAuthority, /Board\s+Approval\s+Reference/i, true);
     ensureHeadingValue(ss.sanctionCrossVerifiedSummary, /AI\s+Cross-Verified\s+Facility/i, true);
-    ensureHeadingValue(ss.sanctionSecurityAndCompliance, /Collateral\s+Security/i, true);
     ensureHeadingValue(ss.sanctionSpecialConditions, /Operative\s+Terms,\s*Conditions/i, true);
   }
 }
@@ -2085,16 +2073,12 @@ export async function verifyPopulatedDocxBlob(
   };
 
   const ph = memo.placeholders;
-  const checkRawIcNarratives = docType !== 'sanction' || Boolean(activeTemplate);
-
-  if (checkRawIcNarratives) {
-    checkNarrative(
-      'Justification of The Proposed Facility',
-      memo.justificationLines,
-      /^(?:\d+\.\s*)?Justification\s+of\s+(?:the\s+)?Proposed\s+Facility\b/i,
-      ['#51#', '#justification#', '{{justification}}', '[justification]']
-    );
-  }
+  checkNarrative(
+    'Justification of The Proposed Facility',
+    memo.justificationLines,
+    /^(?:\d+\.\s*)?Justification\s+of\s+(?:the\s+)?Proposed\s+Facility\b/i,
+    ['#51#', '#justification#', '{{justification}}', '[justification]']
+  );
   checkNarrative(
     '1. Nature of Business',
     ph['#54#'] || '',
@@ -2107,38 +2091,36 @@ export async function verifyPopulatedDocxBlob(
     /^(?:8\.\s*)?Source\s+of\s+Repayment\s*:?/i,
     ['#sourceOfRepayment#', '#sec8SourceOfRepayment#', '{{sourceOfRepayment}}', '[sourceOfRepayment]']
   );
-  if (checkRawIcNarratives) {
-    checkNarrative(
-      "12. Contents of the Client's Prayer",
-      memo.clientPrayer,
-      /^(?:12\s*[.)]\s*)?Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer\s*:?/i,
-      ['#clientPrayer#', '#contentsOfClientsPrayer#', '{{clientPrayer}}', '{{contentsOfClientsPrayer}}', '[clientPrayer]']
-    );
-    checkNarrative(
-      '12. Branch Visit Report',
-      memo.branchVisitReport,
-      /^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report\s*:?/i,
-      ['#branchVisit#', '#branchVisitReport#', '{{branchVisit}}', '{{branchVisitReport}}', '[branchVisit]', '[branchVisitReport]']
-    );
-    checkNarrative(
-      '13. Recommendation of The Branch',
-      memo.sec13BranchRecommendation,
-      /^(?:13\s*[.)]\s*)?Recommendation\s+of\s+(?:the\s+)?Branch\b/i,
-      ['#branchRecommendation#', '#sec13BranchRecommendation#', '{{branchRecommendation}}', '{{sec13BranchRecommendation}}']
-    );
-    checkNarrative(
-      '14. Recommendation of ICCD',
-      memo.sec14IccdRecommendation,
-      /^(?:14\s*[.)]\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)\b/i,
-      ['#iccdRecommendation#', '#sec14IccdRecommendation#', '{{iccdRecommendation}}', '{{sec14IccdRecommendation}}']
-    );
-    checkNarrative(
-      '15. Observation and Recommendation of SAMD',
-      memo.samdObservation,
-      /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
-      ['#samdObservation#', '#samd#', '{{samdObservation}}']
-    );
-  }
+  checkNarrative(
+    "12. Contents of the Client's Prayer",
+    memo.clientPrayer,
+    /^(?:12\s*[.)]\s*)?Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer\s*:?/i,
+    ['#clientPrayer#', '#contentsOfClientsPrayer#', '{{clientPrayer}}', '{{contentsOfClientsPrayer}}', '[clientPrayer]']
+  );
+  checkNarrative(
+    '12. Branch Visit Report',
+    memo.branchVisitReport,
+    /^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report\s*:?/i,
+    ['#branchVisit#', '#branchVisitReport#', '{{branchVisit}}', '{{branchVisitReport}}', '[branchVisit]', '[branchVisitReport]']
+  );
+  checkNarrative(
+    '13. Recommendation of The Branch',
+    memo.sec13BranchRecommendation,
+    /^(?:13\s*[.)]\s*)?Recommendation\s+of\s+(?:the\s+)?Branch\b/i,
+    ['#branchRecommendation#', '#sec13BranchRecommendation#', '{{branchRecommendation}}', '{{sec13BranchRecommendation}}']
+  );
+  checkNarrative(
+    '14. Recommendation of ICCD',
+    memo.sec14IccdRecommendation,
+    /^(?:14\s*[.)]\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)\b/i,
+    ['#iccdRecommendation#', '#sec14IccdRecommendation#', '{{iccdRecommendation}}', '{{sec14IccdRecommendation}}']
+  );
+  checkNarrative(
+    '15. Observation and Recommendation of SAMD',
+    memo.samdObservation,
+    /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
+    ['#samdObservation#', '#samd#', '{{samdObservation}}']
+  );
 
   if (docType !== 'ic' && stageMemo) {
     const si = stageMemo.stageInputs;
@@ -2157,7 +2139,7 @@ export async function verifyPopulatedDocxBlob(
         ['#icMemoDate#', '{{icMemoDate}}']
       );
       checkNarrative(
-        '16. Recommendation of the Investment Committee (IC)',
+        'Recommendation of the Investment Committee (IC)',
         ss.mecIcRecommendation,
         /Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i,
         ['#mecIcRecommendation#', '{{mecIcRecommendation}}']
@@ -2188,9 +2170,9 @@ export async function verifyPopulatedDocxBlob(
         ['#mecMemoDate#', '{{mecMemoDate}}']
       );
       checkNarrative(
-        '17. Management Executive Committee (MEC) Recommendation',
+        'Recommendation of the Management Executive Committee (MEC)',
         ss.boardMecRecommendation,
-        /(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*\(?MEC\)?\s+Recommendation)/i,
+        /Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i,
         ['#boardMecRecommendation#', '{{boardMecRecommendation}}']
       );
       checkNarrative(
@@ -2231,12 +2213,6 @@ export async function verifyPopulatedDocxBlob(
         ['#sanctionCrossVerifiedSummary#', '{{sanctionCrossVerifiedSummary}}']
       );
       checkNarrative(
-        'Collateral Security, Legal & Regulatory Clearance Schedule',
-        ss.sanctionSecurityAndCompliance,
-        /Collateral\s+Security/i,
-        ['#sanctionSecurityAndCompliance#', '{{sanctionSecurityAndCompliance}}']
-      );
-      checkNarrative(
         'Operative Terms, Conditions & Redemption Covenants',
         ss.sanctionSpecialConditions,
         /Operative\s+Terms,\s*Conditions/i,
@@ -2246,25 +2222,14 @@ export async function verifyPopulatedDocxBlob(
   }
 
   if (checkBuiltIn) {
-    const coreCodes =
-      docType === 'sanction'
-        ? ([
-            ['#2#', 'Account Number / Client'],
-            ['#4#', 'Waiver Amount'],
-            ['#25#', 'NET Outstanding'],
-            ['#27#', 'Settlement Amount'],
-            ['#28#', 'Settlement Period'],
-          ] as const)
-        : ([
-            ['#1#', 'Proposal Date'],
-            ['#2#', 'Account Number / Client'],
-            ['#4#', 'Waiver Amount'],
-            ['#25#', 'NET Outstanding'],
-            ['#27#', 'Settlement Amount'],
-            ['#28#', 'Settlement Period'],
-          ] as const);
-
-    for (const [code, lbl] of coreCodes) {
+    for (const [code, lbl] of [
+      ['#1#', 'Proposal Date'],
+      ['#2#', 'Account Number / Client'],
+      ['#4#', 'Waiver Amount'],
+      ['#25#', 'NET Outstanding'],
+      ['#27#', 'Settlement Amount'],
+      ['#28#', 'Settlement Period'],
+    ] as const) {
       const val = (ph[code] || '').trim();
       if (val && !containsSnippet(val)) {
         missingLabels.push(`${lbl} (${code})`);

@@ -401,7 +401,6 @@ export type StageScrutinySectionKey =
   | 'boardResolutionTerms'
   | 'sanctionBoardAuthority'
   | 'sanctionCrossVerifiedSummary'
-  | 'sanctionSecurityAndCompliance'
   | 'sanctionSpecialConditions';
 
 export interface StageMemoInputs {
@@ -416,18 +415,6 @@ export interface StageMemoInputs {
 }
 
 export type StageAiSectionsData = Record<StageScrutinySectionKey, string | null>;
-
-export interface StageUploadedSourceMeta {
-  docType: StageMemoDocType;
-  uploaded: boolean;
-  fileName: string;
-  fileSize: number;
-  uploadedAt: string;
-  scrutinizing: boolean;
-  stage: string | null;
-  error: string | null;
-  missingOrInconsistentNotes: string[];
-}
 
 export interface StageBatchScrutinyState {
   running: boolean;

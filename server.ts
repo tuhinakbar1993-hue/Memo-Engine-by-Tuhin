@@ -1585,12 +1585,14 @@ ${batchContext}`,
     context?: Record<string, unknown>
   ): { prompt: string; schema: Schema } {
     const stageInputs = (context?.stageInputs ?? {}) as Record<string, string>;
-    const icNo = (stageInputs.icMemoNumber || '').trim() || '[IC Memo Number]';
+    const icNo = (stageInputs.icMemoNumber || '').trim() || '[Chronologic Order of the IC Memo]';
     const icDt = (stageInputs.icMemoDate || '').trim() || '[IC Memo Date]';
-    const mecNo = (stageInputs.mecMemoNumber || '').trim() || '[MEC Memo Number]';
+    const mecNo = (stageInputs.mecMemoNumber || '').trim() || '[Chronologic Order of the MEC Memo]';
     const mecDt = (stageInputs.mecMemoDate || '').trim() || '[MEC Memo Date]';
-    const boardNo = (stageInputs.boardMemoNumber || '').trim() || '[Board Memo Number]';
+    const boardNo = (stageInputs.boardMemoNumber || '').trim() || '[Chronologic Order of the Board Memo]';
     const boardDt = (stageInputs.boardMemoDate || '').trim() || '[Board Memo Date]';
+
+    const icCentralRule = `PRIMARY SOURCE INSTRUCTION: Treat the finalized IC Memo data in the context ("icMemoFinalized", "placeholders", "icMemoAiSections", and carried sections) as the primary central data reference. Preserve 100% consistency with every client detail, facility mode, financial figure, security value, justification, observation, and recommendation established in the IC Memo — never alter, contradict, omit, or invent inconsistent figures. Adapt only the framing/terminology for this approval stage.`;
 
     const schema: Schema = {
       type: Type.OBJECT,
@@ -1604,56 +1606,65 @@ ${batchContext}`,
     switch (section) {
       case 'mecIcRecommendation':
         return {
-          prompt: `Write Section "Recommendation of the Investment Committee (IC)" for the Management Executive Committee (MEC) Memorandum.
-You MUST explicitly incorporate IC Memo Number "${icNo}" and IC Memo Date "${icDt}" into the formal recommendation wording (e.g., referencing the Investment Committee's recommendation vide IC Memo No. ${icNo} dated ${icDt}), accurately stating the recommended Exit with Waiver facility under BRPD Circular Letter No. 23 dated 29.06.2026, NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), Settlement Period (#28#), Cost of Fund compliance (#31#, #44#), and placement before the MEC for kind consideration.
-Cross-verify all figures strictly against the IC Memo context and Branch Proposal. Output ONLY clean official banking text with no AI preambles or markdown asterisks.`,
+          prompt: `${icCentralRule}
+Write Section "Recommendation of the Investment Committee (IC)" for the Management Executive Committee (MEC) Memorandum.
+You MUST explicitly incorporate the Chronologic Order of the IC Memo "${icNo}" and IC Memo Date "${icDt}" into the formal recommendation wording (e.g., referencing the Investment Committee's recommendation vide IC Memo (Chronologic Order: ${icNo}) dated ${icDt}), accurately stating the recommended Exit with Waiver facility under BRPD Circular Letter No. 23 dated 29.06.2026, NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), Settlement Period (#28#), Cost of Fund compliance (#31#, #44#), and placement before the MEC for kind consideration.
+Output ONLY clean official banking text with no AI preambles or markdown asterisks.`,
           schema,
         };
       case 'mecExecutiveSummary':
         return {
-          prompt: `Scrutinize the Branch Proposal together with the complete carried-forward IC Memo data (including Contents of the Client's Prayer, Justification, Liability Positions, CIB Status, Legal/Audit Status, Security Valuation MV/FSV, Source of Repayment, Branch Visit Report, Branch Recommendation, and SAMD Observation) and write Section "Executive Appraisal & Waiver Rationale for MEC".
-Write 2 concise, structured formal banking paragraphs synthesizing the borrower's distress, security coverage, Cost of Fund surplus/deficit vs maximum permissible waiver, and strategic recovery benefit for the Management Executive Committee without altering any IC Memo figures. Clean official prose only, no asterisks.`,
+          prompt: `${icCentralRule}
+Scrutinize the finalized IC Memo (including Contents of the Client's Prayer, Justification, Liability Positions, CIB Status, Legal/Audit Status, Security Valuation MV/FSV, Source of Repayment, Branch Visit Report, Branch Recommendation, and SAMD Observation) alongside the Branch Proposal and write Section "Executive Appraisal & Waiver Rationale for MEC".
+Write 2 concise, structured formal banking paragraphs synthesizing the borrower's distress, security coverage, Cost of Fund surplus/deficit vs maximum permissible waiver, and strategic recovery benefit for the Management Executive Committee strictly preserving all IC Memo facts and figures. Clean official prose only, no asterisks.`,
           schema,
         };
       case 'mecSamdRecommendation':
         return {
-          prompt: `Write Section "Observation and Recommendation of SAMD for MEC" placing this Exit with Waiver proposal before the Management Executive Committee after Investment Committee scrutiny (referencing IC Memo No. ${icNo} dated ${icDt} if provided).
-Write 3 to 4 crisp numbered formal points ("1. ...", "2. ...", "3. ...") summarizing verified liability & COF recovery protection, compliance with special terms & conditions, and formal recommendation for MEC approval/onward placement before the Board. Clean official prose only.`,
+          prompt: `${icCentralRule}
+Write Section "Observation and Recommendation of SAMD for MEC" placing this Exit with Waiver proposal before the Management Executive Committee after Investment Committee scrutiny (explicitly referencing Chronologic Order of the IC Memo "${icNo}" dated "${icDt}" if provided).
+Write 3 to 4 crisp numbered formal points ("1. ...", "2. ...", "3. ...") summarizing verified liability & COF recovery protection carried forward from the IC Memo, compliance with special terms & conditions, and formal recommendation for MEC approval/onward placement before the Board. Clean official prose only.`,
           schema,
         };
       case 'boardMecRecommendation':
         return {
-          prompt: `Write Section "Recommendation of the Management Executive Committee (MEC)" for the Board of Directors Memorandum.
-You MUST explicitly incorporate MEC Memo Number "${mecNo}" and MEC Memo Date "${mecDt}" (while preserving reference to IC Memo No. ${icNo} dated ${icDt} where available), accurately summarizing the MEC's recommendation for Exit with Waiver under BRPD Circular Letter No. 23 dated 29.06.2026 covering Account (#2#), Branch (#3#), NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), and Settlement Period (#28#).
+          prompt: `${icCentralRule}
+Write Section "Recommendation of the Management Executive Committee (MEC)" for the Board of Directors Memorandum.
+You MUST explicitly incorporate the Chronologic Order of the MEC Memo "${mecNo}" and MEC Memo Date "${mecDt}" (while preserving reference to Chronologic Order of the IC Memo "${icNo}" dated "${icDt}" where available), accurately summarizing the MEC's recommendation for Exit with Waiver under BRPD Circular Letter No. 23 dated 29.06.2026 covering Account (#2#), Branch (#3#), NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), and Settlement Period (#28#).
 Clean formal banking prose only; no markdown asterisks or AI notes.`,
           schema,
         };
       case 'boardProposalRationale':
         return {
-          prompt: `Scrutinize all carried-forward IC Memo & MEC Memo data alongside the Branch Proposal and write Section "Board Memorandum Summary & Financial Justification" for submission to the Board of Directors.
-Cover: (1) account classification, CIB/legal/regulatory verification, (2) financial recovery & Cost of Fund protection analysis (Principal #7#, Charges #8#, COF #31#, Breakup Total #32# vs Settlement Amount #27#, Max Waiver #44# vs Proposed Waiver #4#), and (3) why full and final settlement with waiver maximizes timely cash recovery over prolonged recovery proceedings. Clean formal banking prose only.`,
+          prompt: `${icCentralRule}
+Using the finalized IC Memo and carried-forward MEC Memo data (alongside the Branch Proposal), write Section "Board Memorandum Summary & Financial Justification" for submission to the Board of Directors.
+Cover: (1) account classification, CIB/legal/regulatory verification established in the IC Memo, (2) financial recovery & Cost of Fund protection analysis (Principal #7#, Charges #8#, COF #31#, Breakup Total #32# vs Settlement Amount #27#, Max Waiver #44# vs Proposed Waiver #4#), and (3) why full and final settlement with waiver maximizes timely cash recovery over prolonged recovery proceedings. Clean formal banking prose only.`,
           schema,
         };
       case 'boardResolutionTerms':
         return {
-          prompt: `Write Section "Proposed Board Resolution & Approval Terms" for the Board Memorandum, framing a formal resolution for approval by the Board of Directors of Sammilito Islami Bank PLC for the proposed Exit with Waiver (Account #2#, Branch #3#, Settlement Amount #27# Million, Waiver #4# Million, Deadline #28#) subject to compliance with Special Terms & Conditions and Bangladesh Bank BRPD Circular Letter No. 23 dated 29.06.2026. Clean formal banking prose only.`,
+          prompt: `${icCentralRule}
+Write Section "Proposed Board Resolution & Approval Terms" for the Board Memorandum, framing a formal resolution for approval by the Board of Directors of Sammilito Islami Bank PLC for the proposed Exit with Waiver (Account #2#, Branch #3#, Settlement Amount #27# Million, Waiver #4# Million, Deadline #28#; referencing MEC Chronologic Order ${mecNo} dated ${mecDt}) subject to compliance with Special Terms & Conditions and Bangladesh Bank BRPD Circular Letter No. 23 dated 29.06.2026. Clean formal banking prose only.`,
           schema,
         };
       case 'sanctionBoardAuthority':
         return {
-          prompt: `Write Section "Board Approval Reference & Sanction Basis" for the Head Office Sanction Letter.
-You MUST explicitly incorporate Board Memo Number "${boardNo}" and Board Memo Date "${boardDt}" (and preserve chain references to MEC Memo No. ${mecNo} dated ${mecDt} and IC Memo No. ${icNo} dated ${icDt} where available), formally conveying Head Office sanction for the approved Exit with Waiver facility for A/C ${'#2#'} of ${'#3#'} Branch under BRPD Circular Letter No. 23 dated 29.06.2026. Clean official Head Office Sanction Letter prose only.`,
+          prompt: `${icCentralRule}
+Write Section "Board Approval Reference & Sanction Basis" for the Head Office Sanction Letter.
+You MUST explicitly incorporate the Chronologic Order of the Board Memo "${boardNo}" and Board Memo Date "${boardDt}" (and preserve chain references to Chronologic Order of the MEC Memo "${mecNo}" dated "${mecDt}" and Chronologic Order of the IC Memo "${icNo}" dated "${icDt}" where available), formally conveying Head Office sanction for the approved Exit with Waiver facility for A/C ${'#2#'} of ${'#3#'} Branch under BRPD Circular Letter No. 23 dated 29.06.2026. Clean official Head Office Sanction Letter prose only.`,
           schema,
         };
       case 'sanctionCrossVerifiedSummary':
         return {
-          prompt: `Perform an AI cross-verification across ALL uploaded source documents (Outstanding, Party Performance, Overdue, Account Statement, CIB Report, Cost of Fund, Branch Proposal) and the chained IC -> MEC -> Board memo data to write Section "AI Cross-Verified Facility & Liability Confirmation" for the Sanction Letter.
-Confirm exact verified figures in Million BDT (NET Outstanding #25#, Principal #7#, Charges #8#, Down Payment #35# in A/C #36#, Cost of Fund #31#, Breakup Total #32#, Proposed Waiver #4#, Settlement/Exit Amount #27#, Settlement Period #28#, Security MV #33# & FSV #34#) and confirm no discrepancy against Branch Proposal and Board sanction parameters. Clean official prose only; flag any missing verification input strictly inside "insufficientReason".`,
+          prompt: `${icCentralRule}
+Perform an AI cross-verification across ALL uploaded source documents (Outstanding, Party Performance, Overdue, Account Statement, CIB Report, Cost of Fund, Branch Proposal) and the chained IC -> MEC -> Board memo data to write Section "AI Cross-Verified Facility & Liability Confirmation" for the Sanction Letter.
+Confirm exact verified figures in Million BDT (NET Outstanding #25#, Principal #7#, Charges #8#, Down Payment #35# in A/C #36#, Cost of Fund #31#, Breakup Total #32#, Proposed Waiver #4#, Settlement/Exit Amount #27#, Settlement Period #28#, Security MV #33# & FSV #34#) and confirm full consistency with the IC Memo, Branch Proposal, and Board sanction parameters. Clean official prose only; flag any missing verification input strictly inside "insufficientReason".`,
           schema,
         };
       case 'sanctionSpecialConditions':
         return {
-          prompt: `Write Section "Operative Terms, Conditions & Redemption Covenants" tailored for this Head Office Sanction Letter based on the verified account particulars, security position, legal/CIB status, and Board Memo No. ${boardNo} dated ${boardDt}.
+          prompt: `${icCentralRule}
+Write Section "Operative Terms, Conditions & Redemption Covenants" tailored for this Head Office Sanction Letter based on the verified IC Memo particulars, security position, legal/CIB status, and Board Memo (Chronologic Order: ${boardNo} dated ${boardDt}).
 Write crisp numbered operative covenants ("i. ...", "ii. ...", etc.) covering adjustment of settlement within ${'#28#'}, determination of final up-to-date settlement balance at execution date, clearance of all direct/indirect/non-funded (L/C, BG, Credit Card) liabilities prior to collateral redemption, non-reduction of profit rate to 0.00% until full adjustment, legal/suit withdrawal cost recovery, and automatic cancellation on default. Clean official banking prose only.`,
           schema,
         };

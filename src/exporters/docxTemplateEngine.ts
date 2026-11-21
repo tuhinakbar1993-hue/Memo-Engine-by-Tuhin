@@ -1752,11 +1752,11 @@ function applyStructuralPopulations(
       else if (stageMemo) {
         const si = stageMemo.stageInputs;
         const ss = stageMemo.stageSections;
-        if (/^IC\s*Memo\s*(?:Number|No\.?)$/i.test(label)) trySet(nonEmpty(si.icMemoNumber));
+        if (/^(?:Chronologic\s+Order\s+of\s+(?:the\s+)?IC\s*Memo|IC\s*Memo\s*(?:Number|No\.?))$/i.test(label)) trySet(nonEmpty(si.icMemoNumber));
         else if (/^IC\s*Memo\s*Date$/i.test(label)) trySet(nonEmpty(si.icMemoDate));
-        else if (/^MEC\s*Memo\s*(?:Number|No\.?)$/i.test(label)) trySet(nonEmpty(si.mecMemoNumber));
+        else if (/^(?:Chronologic\s+Order\s+of\s+(?:the\s+)?MEC\s*Memo|MEC\s*Memo\s*(?:Number|No\.?))$/i.test(label)) trySet(nonEmpty(si.mecMemoNumber));
         else if (/^MEC\s*Memo\s*Date$/i.test(label)) trySet(nonEmpty(si.mecMemoDate));
-        else if (/^Board\s*Memo\s*(?:Number|No\.?)$/i.test(label)) trySet(nonEmpty(si.boardMemoNumber));
+        else if (/^(?:Chronologic\s+Order\s+of\s+(?:the\s+)?Board\s*Memo|Board\s*Memo\s*(?:Number|No\.?))$/i.test(label)) trySet(nonEmpty(si.boardMemoNumber));
         else if (/^Board\s*Memo\s*Date$/i.test(label)) trySet(nonEmpty(si.boardMemoDate));
         else if (/^Sanction\s*(?:Ref\.?\s*No\.?|Number)$/i.test(label)) trySet(nonEmpty(si.sanctionRefNumber));
         else if (/^Sanction\s*Date$/i.test(label)) trySet(nonEmpty(si.sanctionDate));
@@ -2127,9 +2127,9 @@ export async function verifyPopulatedDocxBlob(
     const ss = stageMemo.stageSections;
     if (docType === 'mec') {
       checkNarrative(
-        'IC Memo Number',
+        'Chronologic Order of the IC Memo',
         si.icMemoNumber,
-        /IC\s*Memo\s*(?:Number|No)/i,
+        /(?:Chronologic\s+Order\s+of\s+(?:the\s+)?IC\s*Memo|IC\s*Memo\s*(?:Number|No))/i,
         ['#icMemoNumber#', '{{icMemoNumber}}', '#icMemoNo#']
       );
       checkNarrative(
@@ -2158,9 +2158,9 @@ export async function verifyPopulatedDocxBlob(
       );
     } else if (docType === 'board') {
       checkNarrative(
-        'MEC Memo Number',
+        'Chronologic Order of the MEC Memo',
         si.mecMemoNumber,
-        /MEC\s*Memo\s*(?:Number|No)/i,
+        /(?:Chronologic\s+Order\s+of\s+(?:the\s+)?MEC\s*Memo|MEC\s*Memo\s*(?:Number|No))/i,
         ['#mecMemoNumber#', '{{mecMemoNumber}}', '#mecMemoNo#']
       );
       checkNarrative(
@@ -2189,9 +2189,9 @@ export async function verifyPopulatedDocxBlob(
       );
     } else if (docType === 'sanction') {
       checkNarrative(
-        'Board Memo Number',
+        'Chronologic Order of the Board Memo',
         si.boardMemoNumber,
-        /Board\s*Memo\s*(?:Number|No)/i,
+        /(?:Chronologic\s+Order\s+of\s+(?:the\s+)?Board\s*Memo|Board\s*Memo\s*(?:Number|No))/i,
         ['#boardMemoNumber#', '{{boardMemoNumber}}', '#boardMemoNo#']
       );
       checkNarrative(

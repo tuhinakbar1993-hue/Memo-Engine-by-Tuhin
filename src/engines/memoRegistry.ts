@@ -11,18 +11,18 @@ export const MEMO_ENGINES: MemoEngineDefinition[] = [
     id: 'mec',
     name: 'MEC Memo',
     status: 'implemented',
-    description: 'Management Executive Committee Memorandum carrying forward full IC Memo data with IC Memo Number, Date & Recommendation.',
+    description: 'Management Executive Committee Memorandum carrying forward full IC Memo data with Chronologic Order of the IC Memo, Date & Recommendation.',
   },
   {
     id: 'board',
     name: 'Board Memo',
     status: 'implemented',
-    description: 'Board of Directors Memorandum carrying forward IC & MEC data with MEC Memo Number, Date & Recommendation.',
+    description: 'Board of Directors Memorandum carrying forward IC & MEC data with Chronologic Order of the MEC Memo, Date & Recommendation.',
   },
   {
     id: 'sanction',
     name: 'Sanction',
     status: 'implemented',
-    description: 'Head Office Sanction Letter carrying forward Board Memo Number, Date, cross-verified figures & operative terms.',
+    description: 'Head Office Sanction Letter carrying forward Chronologic Order of the Board Memo, Date, cross-verified figures & operative terms.',
   },
 ];

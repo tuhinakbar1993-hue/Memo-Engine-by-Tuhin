@@ -834,6 +834,11 @@ export default function App() {
       sec13BranchRecommendation: latestMemo.sec13BranchRecommendation,
       sec14IccdRecommendation: latestMemo.sec14IccdRecommendation,
       samdObservation: latestMemo.samdObservation,
+      sec2NonFundedNote: latestMemo.sec2NonFundedNote,
+      sec7OthersNote: latestMemo.sec7OthersNote,
+      sectionSummaries: latestMemo.sectionSummaries,
+      icMemoFinalized: latestMemo,
+      icMemoAiSections: latest.aiSections,
       extractedSummaries: {
         outstanding: latest.extractedDocs.outstanding,
         partyPerformance: latest.extractedDocs.partyPerformance,

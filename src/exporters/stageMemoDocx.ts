@@ -181,14 +181,14 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
   if (docType === 'mec') {
     const icRefLine =
       stageInputs.icMemoNumber || stageInputs.icMemoDate
-        ? `${stageInputs.icMemoNumber || '[IC Memo Number]'} dated ${stageInputs.icMemoDate || '[IC Memo Date]'}`
+        ? `${stageInputs.icMemoNumber || '[Chronologic Order of the IC Memo]'} dated ${stageInputs.icMemoDate || '[IC Memo Date]'}`
         : '';
 
     body.push(
       ...buildStageMetadataTable([
         { label: 'Dated', value: stageInputs.mecMemoDate || stageInputs.icMemoDate || v('#1#') },
-        { label: 'MEC Memo no', value: stageInputs.mecMemoNumber || '', boldValue: Boolean(stageInputs.mecMemoNumber) },
-        { label: 'IC Memo Number', value: stageInputs.icMemoNumber || '', boldValue: Boolean(stageInputs.icMemoNumber) },
+        { label: 'Chronologic Order of the MEC Memo', value: stageInputs.mecMemoNumber || '', boldValue: Boolean(stageInputs.mecMemoNumber) },
+        { label: 'Chronologic Order of the IC Memo', value: stageInputs.icMemoNumber || '', boldValue: Boolean(stageInputs.icMemoNumber) },
         { label: 'IC Memo Date', value: stageInputs.icMemoDate || '', boldValue: Boolean(stageInputs.icMemoDate) },
         { label: 'To', value: 'Management Executive Committee (MEC)' },
         { label: 'From', value: 'SAMD' },
@@ -205,7 +205,7 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
 
     // MEC Governance & AI Scrutiny Sections
     const defaultIcRec = icRefLine
-      ? `The Investment Committee (IC), vide IC Memo No. ${stageInputs.icMemoNumber || '[IC Memo Number]'} dated ${stageInputs.icMemoDate || '[IC Memo Date]'}, examined the proposal and recommended full and final Exit with Waiver of Tk. ${v('#4#')} Million against settlement amount of Tk. ${v('#27#')} Million within ${v('#28#')}.`
+      ? `The Investment Committee (IC), vide IC Memo (Chronologic Order: ${stageInputs.icMemoNumber || '[Chronologic Order of the IC Memo]'}) dated ${stageInputs.icMemoDate || '[IC Memo Date]'}, examined the proposal and recommended full and final Exit with Waiver of Tk. ${v('#4#')} Million against settlement amount of Tk. ${v('#27#')} Million within ${v('#28#')}.`
       : '';
 
     body.push(
@@ -233,10 +233,10 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
     body.push(
       ...buildStageMetadataTable([
         { label: 'Dated', value: stageInputs.boardMemoDate || stageInputs.mecMemoDate || v('#1#') },
-        { label: 'Board Memo no', value: stageInputs.boardMemoNumber || '', boldValue: Boolean(stageInputs.boardMemoNumber) },
-        { label: 'MEC Memo Number', value: stageInputs.mecMemoNumber || '', boldValue: Boolean(stageInputs.mecMemoNumber) },
+        { label: 'Chronologic Order of the Board Memo', value: stageInputs.boardMemoNumber || '', boldValue: Boolean(stageInputs.boardMemoNumber) },
+        { label: 'Chronologic Order of the MEC Memo', value: stageInputs.mecMemoNumber || '', boldValue: Boolean(stageInputs.mecMemoNumber) },
         { label: 'MEC Memo Date', value: stageInputs.mecMemoDate || '', boldValue: Boolean(stageInputs.mecMemoDate) },
-        { label: 'IC Memo Ref.', value: `${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}` },
+        { label: 'Chronologic Order of the IC Memo & Date', value: `${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}` },
         { label: 'To', value: 'Board of Directors' },
         { label: 'From', value: 'Management Executive Committee (MEC) / SAMD' },
       ])
@@ -249,9 +249,19 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
       })
     );
 
+    if (stageSections.mecIcRecommendation.trim()) {
+      body.push(
+        ...renderNarrativeParagraphs(
+          'Recommendation of the Investment Committee (IC) (Carried Forward):',
+          stageSections.mecIcRecommendation,
+          { before: 50 }
+        )
+      );
+    }
+
     const defaultMecRec =
       stageInputs.mecMemoNumber || stageInputs.mecMemoDate
-        ? `The Management Executive Committee (MEC), vide MEC Memo No. ${stageInputs.mecMemoNumber || '[MEC Memo Number]'} dated ${stageInputs.mecMemoDate || '[MEC Memo Date]'}, concurred with the Investment Committee (IC Memo No. ${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}) and recommended Exit with Waiver of Tk. ${v('#4#')} Million for final placement before the Board of Directors.`
+        ? `The Management Executive Committee (MEC), vide MEC Memo (Chronologic Order: ${stageInputs.mecMemoNumber || '[Chronologic Order of the MEC Memo]'}) dated ${stageInputs.mecMemoDate || '[MEC Memo Date]'}, concurred with the Investment Committee (Chronologic Order of IC Memo: ${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}) and recommended Exit with Waiver of Tk. ${v('#4#')} Million for final placement before the Board of Directors.`
         : '';
 
     body.push(
@@ -281,10 +291,10 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
       ...buildStageMetadataTable([
         { label: 'Sanction Ref. No.', value: stageInputs.sanctionRefNumber || '', boldValue: Boolean(stageInputs.sanctionRefNumber) },
         { label: 'Sanction Date', value: stageInputs.sanctionDate || stageInputs.boardMemoDate || v('#1#') },
-        { label: 'Board Memo Number', value: stageInputs.boardMemoNumber || '', boldValue: Boolean(stageInputs.boardMemoNumber) },
+        { label: 'Chronologic Order of the Board Memo', value: stageInputs.boardMemoNumber || '', boldValue: Boolean(stageInputs.boardMemoNumber) },
         { label: 'Board Memo Date', value: stageInputs.boardMemoDate || '', boldValue: Boolean(stageInputs.boardMemoDate) },
-        { label: 'MEC Memo Ref.', value: `${stageInputs.mecMemoNumber || '-'} dated ${stageInputs.mecMemoDate || '-'}` },
-        { label: 'IC Memo Ref.', value: `${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}` },
+        { label: 'Chronologic Order of the MEC Memo & Date', value: `${stageInputs.mecMemoNumber || '-'} dated ${stageInputs.mecMemoDate || '-'}` },
+        { label: 'Chronologic Order of the IC Memo & Date', value: `${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}` },
         { label: 'To', value: `The Head of Branch, ${v('#3#')} Branch` },
         { label: 'From', value: 'Special Asset Management Division (SAMD), Head Office' },
       ])
@@ -297,9 +307,28 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
       })
     );
 
+    if (stageSections.mecIcRecommendation.trim()) {
+      body.push(
+        ...renderNarrativeParagraphs(
+          'Recommendation of the Investment Committee (IC) (Carried Forward):',
+          stageSections.mecIcRecommendation,
+          { before: 50 }
+        )
+      );
+    }
+    if (stageSections.boardMecRecommendation.trim()) {
+      body.push(
+        ...renderNarrativeParagraphs(
+          'Recommendation of the Management Executive Committee (MEC) (Carried Forward):',
+          stageSections.boardMecRecommendation,
+          { before: 40 }
+        )
+      );
+    }
+
     const defaultBoardAuth =
       stageInputs.boardMemoNumber || stageInputs.boardMemoDate
-        ? `Pursuant to the approval accorded by the Board of Directors vide Board Memo No. ${stageInputs.boardMemoNumber || '[Board Memo Number]'} dated ${stageInputs.boardMemoDate || '[Board Memo Date]'} (MEC Memo No. ${stageInputs.mecMemoNumber || '-'} dated ${stageInputs.mecMemoDate || '-'}; IC Memo No. ${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}), Head Office is pleased to convey sanction of the Exit with Waiver settlement proposal.`
+        ? `Pursuant to the approval accorded by the Board of Directors vide Board Memo (Chronologic Order: ${stageInputs.boardMemoNumber || '[Chronologic Order of the Board Memo]'}) dated ${stageInputs.boardMemoDate || '[Board Memo Date]'} (MEC Chronologic Order: ${stageInputs.mecMemoNumber || '-'} dated ${stageInputs.mecMemoDate || '-'}; IC Chronologic Order: ${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}), Head Office is pleased to convey sanction of the Exit with Waiver settlement proposal.`
         : '';
 
     body.push(

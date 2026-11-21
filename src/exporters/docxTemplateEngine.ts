@@ -233,8 +233,31 @@ function setCellTextPreservingFormat(
 }
 
 /**
- * Replaces "Label: <old>" inside a paragraph while preserving the bold/underlined label runs
- * and setting the value after ":" using the value run's styling (or non-bold/normal fallback).
+ * Builds a clean non-bold, non-underlined <w:rPr> inheriting font/size/color from an existing paragraph.
+ */
+function buildCleanValueRPr(pEl: Element): Element | null {
+  const runs = directChildren(pEl, 'r');
+  const pPr = directChildren(pEl, 'pPr')[0] ?? null;
+  // Prefer the last run's rPr, else first run's rPr, else pPr/rPr
+  const lastRun = runs[runs.length - 1];
+  const firstRun = runs[0];
+  const srcRPr =
+    (lastRun ? firstDescendant(lastRun, 'rPr') : null) ??
+    (firstRun ? firstDescendant(firstRun, 'rPr') : null) ??
+    (pPr ? firstDescendant(pPr, 'rPr') : null);
+
+  if (!srcRPr) return null;
+  const cloned = srcRPr.cloneNode(true) as Element;
+  for (const tag of ['b', 'bCs', 'u', 'i', 'iCs']) {
+    const el = firstDescendant(cloned, tag);
+    if (el) el.parentNode?.removeChild(el);
+  }
+  return cloned;
+}
+
+/**
+ * Replaces "Label: <old>" inside a paragraph while preserving the bold/underlined label runs,
+ * and handles both existing tails AND empty tails cleanly (e.g. "12. Branch Visit Report:").
  */
 function setParagraphValueAfterColon(
   xmlDoc: Document,
@@ -249,9 +272,33 @@ function setParagraphValueAfterColon(
 
   const afterIdx = colonIdx + 1;
   const tail = full.slice(afterIdx);
-  const leadingSpaces = tail.match(/^\s*/)?.[0] ?? ' ';
-  const replaceStart = afterIdx + leadingSpaces.length;
-  replaceSpanInParagraph(xmlDoc, pEl, replaceStart, full.length, newValue);
+
+  if (tail.trim().length > 0) {
+    const leadingSpaces = tail.match(/^\s*/)?.[0] ?? ' ';
+    const replaceStart = afterIdx + leadingSpaces.length;
+    replaceSpanInParagraph(xmlDoc, pEl, replaceStart, full.length, newValue);
+    return true;
+  }
+
+  // Empty tail after colon: append a clean non-bold/non-underlined run preserving font & size
+  const rEl = xmlDoc.createElementNS(W_NS, 'w:r');
+  const cleanRPr = buildCleanValueRPr(pEl);
+  if (cleanRPr) {
+    rEl.appendChild(cleanRPr);
+  }
+
+  const lines = newValue.split('\n');
+  const needsSpace = tail.length === 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) {
+      rEl.appendChild(xmlDoc.createElementNS(W_NS, 'w:br'));
+    }
+    const tEl = xmlDoc.createElementNS(W_NS, 'w:t');
+    const prefix = i === 0 && needsSpace ? ' ' : '';
+    setTextNodeValue(tEl, prefix + lines[i]);
+    rEl.appendChild(tEl);
+  }
+  pEl.appendChild(rEl);
   return true;
 }
 
@@ -332,6 +379,10 @@ export function buildTemplateTokenMap(memo: ResolvedICMemo): {
     sourceOfRepayment: memo.sourceOfRepayment || '',
     branchVisit: memo.branchVisitReport || '',
     branchVisitReport: memo.branchVisitReport || '',
+    branchRecommendation: memo.sec13BranchRecommendation || '',
+    sec13BranchRecommendation: memo.sec13BranchRecommendation || '',
+    iccdRecommendation: memo.sec14IccdRecommendation || '',
+    sec14IccdRecommendation: memo.sec14IccdRecommendation || '',
     samdObservation: memo.samdObservation || '',
     samd: memo.samdObservation || '',
   };
@@ -397,9 +448,55 @@ function nonEmpty(v: string | undefined): string | null {
 }
 
 /**
+ * Clones/updates table data rows in [dataStartIdx, dataEndIdx) preserving original <w:trPr>, <w:tcPr>, borders, fonts, and sizes.
+ */
+function populateTableDataRowsPreservingFormat(
+  xmlDoc: Document,
+  tbl: Element,
+  dataStartIdx: number,
+  dataEndIdx: number,
+  rowsValues: string[][],
+  allowAppend = true
+) {
+  const trs = directChildren(tbl, 'tr');
+  const existingDataTrs = trs.slice(dataStartIdx, dataEndIdx);
+  if (existingDataTrs.length === 0 || rowsValues.length === 0) return;
+
+  const prototypeTr = existingDataTrs[0];
+  let insertAnchor: Element = existingDataTrs[existingDataTrs.length - 1];
+
+  for (let i = 0; i < rowsValues.length; i++) {
+    const vals = rowsValues[i];
+    let targetTr: Element;
+    if (i < existingDataTrs.length) {
+      targetTr = existingDataTrs[i];
+    } else if (allowAppend) {
+      targetTr = prototypeTr.cloneNode(true) as Element;
+      tbl.insertBefore(targetTr, insertAnchor.nextSibling);
+      insertAnchor = targetTr;
+    } else {
+      break;
+    }
+
+    const tcs = directChildren(targetTr, 'tc');
+    for (let c = 0; c < Math.min(tcs.length, vals.length); c++) {
+      setCellTextPreservingFormat(xmlDoc, tcs[c], vals[c] ?? '');
+    }
+  }
+
+  // Clear leftover empty placeholder rows if source has fewer rows than template slots
+  for (let i = rowsValues.length; i < existingDataTrs.length; i++) {
+    const tcs = directChildren(existingDataTrs[i], 'tc');
+    for (const tc of tcs) {
+      setCellTextPreservingFormat(xmlDoc, tc, '');
+    }
+  }
+}
+
+/**
  * Structural & label-based population for uploaded .docx templates that do not use explicit #code# tokens
  * (or for untokenized sections/tables in a standard Bank Memo template).
- * Strictly preserves all tables, borders, column widths, fonts, sizes, margins, orientation, headers, and footers.
+ * Strictly preserves all tables, nested tables, borders, column widths, fonts, sizes, margins, orientation, headers, and footers.
  */
 function applyStructuralPopulations(
   xmlDoc: Document,
@@ -413,8 +510,10 @@ function applyStructuralPopulations(
   const bodyEl = firstDescendant(xmlDoc.documentElement, 'body');
   if (!bodyEl) return;
 
-  // 1. Process direct body paragraphs
-  const bodyParas = directChildren(bodyEl, 'p');
+  // 1. Process all paragraphs in document order (supporting headings inside SDTs/containers as well as direct body)
+  const bodyParas = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'p')).filter(
+    (pEl) => !pEl.parentElement || pEl.parentElement.localName !== 'tc'
+  );
   for (let i = 0; i < bodyParas.length; i++) {
     const pEl = bodyParas[i];
     if (paragraphsWithTokens.has(pEl)) continue;
@@ -452,13 +551,48 @@ function applyStructuralPopulations(
       continue;
     }
 
+    // 5. Legal Action Status header note
+    if (/^5\.\s*Legal Action Status.*:/i.test(text) && nonEmpty(bp?.section5StatusNote)) {
+      setParagraphValueAfterColon(xmlDoc, pEl, bp!.section5StatusNote);
+      continue;
+    }
+
+    // 6. Audit, Compliance header note
+    if (/^6\.\s*Audit,\s*Compliance.*:/i.test(text) && nonEmpty(bp?.section6StatusNote)) {
+      setParagraphValueAfterColon(xmlDoc, pEl, bp!.section6StatusNote);
+      continue;
+    }
+
+    // 7a / 7b Notes & Collateral Schedules
+    if (/^a\.\s*Primary\s*:/i.test(text) && nonEmpty(bp?.section7PrimaryNote)) {
+      setParagraphValueAfterColon(xmlDoc, pEl, bp!.section7PrimaryNote);
+      continue;
+    }
+    if (/^b\.\s*Collateral\s*:/i.test(text)) {
+      if (nonEmpty(bp?.section7CollateralNote)) {
+        setParagraphValueAfterColon(xmlDoc, pEl, bp!.section7CollateralNote);
+      }
+      if (bp?.section7CollateralSchedules && bp.section7CollateralSchedules.length > 0) {
+        let schedIdx = 0;
+        for (let j = i + 1; j < bodyParas.length && schedIdx < bp.section7CollateralSchedules.length; j++) {
+          const sTxt = getParagraphPlainText(bodyParas[j]).trim();
+          if (/^c\.\s*Others|^8\./i.test(sTxt)) break;
+          if (/^Schedule[-\s]*\d+/i.test(sTxt)) {
+            setParagraphTextPreservingStyle(xmlDoc, bodyParas[j], bp.section7CollateralSchedules[schedIdx]);
+            schedIdx++;
+          }
+        }
+      }
+      continue;
+    }
+
     // 8. Source of Repayment:
     if (/^8\.\s*Source of Repayment\s*:/i.test(text) && nonEmpty(memo.sourceOfRepayment)) {
       setParagraphValueAfterColon(xmlDoc, pEl, memo.sourceOfRepayment);
       continue;
     }
 
-    // 12. Branch Visit Report: (ONLY populate if generated/edited)
+    // 12. Branch Visit Report:
     if (/^12\.\s*Branch Visit Report\s*:/i.test(text) && nonEmpty(memo.branchVisitReport)) {
       setParagraphValueAfterColon(xmlDoc, pEl, memo.branchVisitReport);
       continue;
@@ -473,12 +607,40 @@ function applyStructuralPopulations(
       if (nonEmpty(ph['#65#'])) {
         updated = updated.replace(/(\bdated\s+)(.+)$/i, `$1${ph['#65#']}`);
       }
-      if (updated !== text) {
-        const colonIdx = text.indexOf(':');
+      if (nonEmpty(memo.sec13BranchRecommendation)) {
+        const cleanRec = memo.sec13BranchRecommendation.replace(/\s*\n+\s*/g, ' ');
+        if (updated !== text) {
+          const colonIdx = updated.indexOf(':');
+          if (colonIdx !== -1) {
+            setParagraphValueAfterColon(
+              xmlDoc,
+              pEl,
+              `${updated.slice(colonIdx + 1).trim()}\n${cleanRec}`
+            );
+          }
+        } else {
+          const colonIdx = text.indexOf(':');
+          if (colonIdx !== -1) {
+            const existingTail = text.slice(colonIdx + 1).trim();
+            setParagraphValueAfterColon(
+              xmlDoc,
+              pEl,
+              existingTail ? `${existingTail}\n${cleanRec}` : cleanRec
+            );
+          }
+        }
+      } else if (updated !== text) {
+        const colonIdx = updated.indexOf(':');
         if (colonIdx !== -1) {
           setParagraphValueAfterColon(xmlDoc, pEl, updated.slice(colonIdx + 1).trim());
         }
       }
+      continue;
+    }
+
+    // 14. Recommendation of Internal Control & Compliance Division:
+    if (/^14\.\s*Recommendation of Internal Control/i.test(text) && nonEmpty(memo.sec14IccdRecommendation)) {
+      setParagraphValueAfterColon(xmlDoc, pEl, memo.sec14IccdRecommendation);
       continue;
     }
 
@@ -505,25 +667,27 @@ function applyStructuralPopulations(
             .map((l) => l.trim())
             .filter(Boolean)
             .join('\n');
-          replaceSpanInParagraph(xmlDoc, nextP, 2, nextTxt.length, ` ${cleanLines}`);
+          if (nextTxt.length > 2) {
+            replaceSpanInParagraph(xmlDoc, nextP, 2, nextTxt.length, ` ${cleanLines}`);
+          } else {
+            setParagraphTextPreservingStyle(xmlDoc, nextP, `a. ${cleanLines}`);
+          }
         }
       }
       continue;
     }
 
-    // 15. Observation and Recommendation of SAMD: (ONLY populate if generated/edited)
+    // 15. Observation and Recommendation of SAMD:
     if (/^15\.\s*Observation and Recommendation of SAMD\s*:?/i.test(text) && nonEmpty(memo.samdObservation)) {
       const obsLines = memo.samdObservation
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
       if (obsLines.length > 0) {
-        // Check existing sub-paragraphs between section 15 and section 16
         const existingSub: Element[] = [];
         for (let j = i + 1; j < bodyParas.length; j++) {
           const subText = getParagraphPlainText(bodyParas[j]).trim();
           if (/^16\./.test(subText) || /^17\./.test(subText)) break;
-          // Stop if a table appears immediately after in document order
           let node: ChildNode | null = bodyParas[j].previousSibling;
           let hitTable = false;
           while (node && node !== pEl) {
@@ -539,7 +703,6 @@ function applyStructuralPopulations(
 
         const templateSub = existingSub[0] ?? null;
         if (existingSub.length > 0) {
-          // Put all lines into first sub-paragraph (or clone per line if multiple)
           const firstSub = existingSub[0];
           setParagraphTextPreservingStyle(xmlDoc, firstSub, obsLines[0]);
           let insertAfter: Element = firstSub;
@@ -554,12 +717,10 @@ function applyStructuralPopulations(
               insertAfter = cloned;
             }
           }
-          // Clear any extra old lines if template had more than obsLines.length
           for (let k = obsLines.length; k < existingSub.length; k++) {
             existingSub[k].parentNode?.removeChild(existingSub[k]);
           }
         } else {
-          // No existing sub-paragraph after heading: clone heading <w:p> (stripping bold/underline)
           let insertAfter: Element = pEl;
           for (const line of obsLines) {
             const cloned = xmlDoc.createElementNS(W_NS, 'w:p');
@@ -573,7 +734,6 @@ function applyStructuralPopulations(
             pPr.appendChild(sp);
             cloned.appendChild(pPr);
 
-            // Inherit font & size from heading run if available
             const headingRun = directChildren(pEl, 'r')[0];
             const headingRPr = headingRun ? firstDescendant(headingRun, 'rPr') : null;
             const rEl = xmlDoc.createElementNS(W_NS, 'w:r');
@@ -777,7 +937,7 @@ function applyStructuralPopulations(
     // G. Section 2 Liability Position Table
     if (/Name of the Concern/i.test(tableText) && /Mode of Investment/i.test(tableText)) {
       for (const row of matrix) {
-        if (row.length >= 8 && !row[0].hasTokens && /Funded/i.test(row[1]?.text ?? '')) {
+        if (row.length >= 8 && !row[0].hasTokens && /Funded/i.test(row[1]?.text ?? '') && !/Non/i.test(row[1]?.text ?? '')) {
           if (nonEmpty(ph['#2#'])) setCellTextPreservingFormat(xmlDoc, row[0].tc, ph['#2#']);
           if (nonEmpty(ph['#55#'])) setCellTextPreservingFormat(xmlDoc, row[1].tc, `${ph['#55#']}\nFunded`);
           if (nonEmpty(ph['#56#'])) setCellTextPreservingFormat(xmlDoc, row[2].tc, ph['#56#']);
@@ -786,12 +946,250 @@ function applyStructuralPopulations(
           if (nonEmpty(ph['#59#'])) setCellTextPreservingFormat(xmlDoc, row[5].tc, ph['#59#']);
           if (nonEmpty(ph['#60#'])) setCellTextPreservingFormat(xmlDoc, row[6].tc, ph['#60#']);
           if (nonEmpty(bp?.sec2Remarks)) setCellTextPreservingFormat(xmlDoc, row[7].tc, bp!.sec2Remarks);
+        } else if (/^Non\s*Funded$/i.test(row[0]?.text ?? '') && row.length >= 7) {
+          if (!row[row.length - 1].hasTokens && nonEmpty(memo.sec2NonFundedNote)) {
+            setCellTextPreservingFormat(xmlDoc, row[row.length - 1].tc, memo.sec2NonFundedNote);
+          }
         } else if (/^Total$/i.test(row[0]?.text ?? '') && row.length >= 7) {
           if (!row[1].hasTokens && nonEmpty(ph['#56#'])) setCellTextPreservingFormat(xmlDoc, row[1].tc, ph['#56#']);
           if (!row[2].hasTokens && nonEmpty(ph['#25#'])) setCellTextPreservingFormat(xmlDoc, row[2].tc, ph['#25#']);
           if (!row[3].hasTokens && nonEmpty(ph['#58#'])) setCellTextPreservingFormat(xmlDoc, row[3].tc, ph['#58#']);
           if (!row[4].hasTokens && nonEmpty(ph['#59#'])) setCellTextPreservingFormat(xmlDoc, row[4].tc, ph['#59#']);
           if (!row[5].hasTokens && nonEmpty(ph['#60#'])) setCellTextPreservingFormat(xmlDoc, row[5].tc, ph['#60#']);
+        }
+      }
+      continue;
+    }
+
+    // G2. Section 3 Table (Liability with Other Units / Banks/NBFIs)
+    if (/Name of the Banks\/NBFIs/i.test(tableText) && /CL Status/i.test(tableText)) {
+      if (bp?.section3Rows && bp.section3Rows.length > 0 && matrix.length > 1) {
+        const subTotalIdx = matrix.findIndex((r, idx) => idx > 0 && /sub[-\s]*total|grand\s*total/i.test(r[0]?.text ?? ''));
+        const dataEndIdx = subTotalIdx !== -1 ? subTotalIdx : matrix.length;
+        const dataRows = bp.section3Rows
+          .filter((r) => !/sub[-\s]*total|grand\s*total/i.test(r.sl) && !/sub[-\s]*total|grand\s*total/i.test(r.nameOfConcern))
+          .map((r) => [
+            r.sl,
+            r.nameOfConcern,
+            r.bankOrNbfi,
+            r.natureOfFacility,
+            r.limit,
+            r.outstanding,
+            r.overdueEol,
+            r.expiryDate,
+            r.clStatus,
+          ]);
+        if (dataRows.length > 0) {
+          populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, dataEndIdx, dataRows, true);
+        }
+      }
+      continue;
+    }
+
+    // G3. Section 4 Table (CIB Status)
+    if (/With respective unit/i.test(tableText) && /With Other Bank/i.test(tableText)) {
+      if (bp?.section4Rows && bp.section4Rows.length > 0) {
+        for (const row of matrix) {
+          if (row.length < 6) continue;
+          const st = row[0].text.trim().toLowerCase();
+          const match = bp.section4Rows.find((r) => r.status.trim().toLowerCase() === st);
+          if (match) {
+            if (!row[1].hasTokens) setCellTextPreservingFormat(xmlDoc, row[1].tc, match.unitBorrower);
+            if (!row[2].hasTokens) setCellTextPreservingFormat(xmlDoc, row[2].tc, match.unitGuarantor);
+            if (!row[3].hasTokens) setCellTextPreservingFormat(xmlDoc, row[3].tc, match.otherBorrower);
+            if (!row[4].hasTokens) setCellTextPreservingFormat(xmlDoc, row[4].tc, match.otherGuarantor);
+            if (!row[5].hasTokens) setCellTextPreservingFormat(xmlDoc, row[5].tc, match.remarks);
+          }
+        }
+      }
+      continue;
+    }
+
+    // G4. Section 5 Table (Legal Action Status)
+    if (/Type of Case/i.test(tableText) && /Case No\./i.test(tableText)) {
+      if (bp?.section5Rows && bp.section5Rows.length > 0 && matrix.length > 1) {
+        const rowsData = bp.section5Rows.map((r) => [
+          r.sl,
+          r.typeOfCase,
+          r.caseNo,
+          r.filingDate,
+          r.amount,
+          r.previousDate,
+          r.nextDate,
+          r.presentStatus,
+        ]);
+        populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, matrix.length, rowsData, true);
+      }
+      continue;
+    }
+
+    // G5. Section 6 Table (Audit, Compliance)
+    if (/Name of the Authority/i.test(tableText) && /Objection Status/i.test(tableText)) {
+      if (bp?.section6Rows && bp.section6Rows.length > 0) {
+        for (const row of matrix) {
+          if (row.length < 6) continue;
+          const auth = row[1].text.trim().toLowerCase();
+          const match = bp.section6Rows.find(
+            (r) =>
+              r.authority.trim().toLowerCase() === auth ||
+              (r.sl && row[0].text.trim().replace(/\.$/, '').toLowerCase() === r.sl.trim().replace(/\.$/, '').toLowerCase())
+          );
+          if (match) {
+            if (!row[2].hasTokens) setCellTextPreservingFormat(xmlDoc, row[2].tc, match.lastInspectionDate);
+            if (!row[3].hasTokens) setCellTextPreservingFormat(xmlDoc, row[3].tc, match.objectionStatus);
+            if (!row[4].hasTokens) setCellTextPreservingFormat(xmlDoc, row[4].tc, match.objections);
+            if (!row[5].hasTokens) setCellTextPreservingFormat(xmlDoc, row[5].tc, match.branchReply);
+          }
+        }
+      }
+      continue;
+    }
+
+    // G6. Section 7 Primary Security Table
+    if (/Total value of primary security/i.test(tableText)) {
+      const totalIdx = matrix.findIndex((r) => /Total value of primary security/i.test(r[0]?.text ?? ''));
+      if (bp?.section7PrimaryRows && bp.section7PrimaryRows.length > 0 && totalIdx > 1) {
+        populateTableDataRowsPreservingFormat(
+          xmlDoc,
+          tbl,
+          1,
+          totalIdx,
+          bp.section7PrimaryRows.map((r) => [r.particulars, r.value]),
+          false
+        );
+      }
+      if (totalIdx !== -1 && nonEmpty(bp?.section7PrimaryTotal)) {
+        const totalRow = matrix[totalIdx];
+        if (totalRow.length >= 2 && !totalRow[1].hasTokens) {
+          setCellTextPreservingFormat(xmlDoc, totalRow[1].tc, bp!.section7PrimaryTotal);
+        }
+      }
+      continue;
+    }
+
+    // G7. Section 7 Collateral Valuation Table
+    if (/Value of the mortgaged properties/i.test(tableText) || /Lowest Security value Coverage/i.test(tableText)) {
+      if (bp?.section7ValuationRows && bp.section7ValuationRows.length > 0) {
+        for (const row of matrix) {
+          if (row.length === 11) {
+            const sched = row[0].text.trim().toLowerCase();
+            const match = bp.section7ValuationRows.find((v) => v.schedule.trim().toLowerCase() === sched);
+            if (match) {
+              const vals = [
+                match.origBranchMv,
+                match.origBranchFsv,
+                match.origSurvMv,
+                match.origSurvFsv,
+                match.presBranchMv,
+                match.presBranchFsv,
+                match.presSurvMv,
+                match.presSurvFsv,
+                match.presAvMv,
+                match.presAvFsv,
+              ];
+              for (let c = 0; c < 10; c++) {
+                if (!row[c + 1].hasTokens) {
+                  setCellTextPreservingFormat(xmlDoc, row[c + 1].tc, vals[c] ?? '');
+                }
+              }
+            }
+          }
+        }
+      }
+      const covRow = matrix[matrix.length - 1];
+      if (
+        covRow?.[0] &&
+        !covRow[0].hasTokens &&
+        /Lowest Security value Coverage/i.test(covRow[0].text) &&
+        nonEmpty(bp?.section7CoveragePct)
+      ) {
+        setCellTextPreservingFormat(
+          xmlDoc,
+          covRow[0].tc,
+          `Outstanding to Lowest Security value Coverage (%): ${bp!.section7CoveragePct}`
+        );
+      }
+      continue;
+    }
+
+    // G8. Section 9 Sequence of HO Sanctions Table
+    if (/HO Sanction Reference No\./i.test(tableText)) {
+      if (bp?.section9Rows && bp.section9Rows.length > 0 && matrix.length > 1) {
+        populateTableDataRowsPreservingFormat(
+          xmlDoc,
+          tbl,
+          1,
+          matrix.length,
+          bp.section9Rows.map((r) => [r.sl, r.referenceNo, r.date, r.limit, r.remarks]),
+          true
+        );
+      }
+      continue;
+    }
+
+    // G9. Section 10 Proprietor / Partner / Directors Table
+    if (/Name of the Directors/i.test(tableText) && /Share\s*\(%\)/i.test(tableText)) {
+      if (bp?.section10Directors && bp.section10Directors.length > 0 && matrix.length > 1) {
+        populateTableDataRowsPreservingFormat(
+          xmlDoc,
+          tbl,
+          1,
+          matrix.length,
+          bp.section10Directors.map((d) => [
+            d.name,
+            d.age,
+            d.education,
+            d.designation,
+            d.sharePct,
+            d.experience,
+            d.netWorth,
+          ]),
+          true
+        );
+      }
+      continue;
+    }
+
+    // G10. Section 10 Bank / FI / Insurance Directors Table
+    if (/Name of the bank\/NBFIs/i.test(tableText) && /Number of Shares/i.test(tableText)) {
+      if (bp?.section10BankDirectors && bp.section10BankDirectors.length > 0 && matrix.length > 1) {
+        populateTableDataRowsPreservingFormat(
+          xmlDoc,
+          tbl,
+          1,
+          matrix.length,
+          bp.section10BankDirectors.map((d) => [
+            d.name,
+            d.bankNbfi,
+            d.designation,
+            d.sharePct,
+            d.numShares,
+          ]),
+          true
+        );
+      }
+      continue;
+    }
+
+    // G11. Section 11 Financials Table
+    if (/Gross Sales/i.test(tableText) && /Total Asset/i.test(tableText) && /Net Worth/i.test(tableText)) {
+      if (matrix.length > 1) {
+        const finData =
+          bp?.section11Rows && bp.section11Rows.length > 0
+            ? bp.section11Rows.map((r) => [
+                r.year,
+                r.grossSales,
+                r.grossProfit,
+                r.netProfit,
+                r.totalAsset,
+                r.totalLiabilities,
+                r.netWorth,
+              ])
+            : bp?.section11FinancialsNote
+              ? [['', bp.section11FinancialsNote, '', '', '', '', '']]
+              : [];
+        if (finData.length > 0) {
+          populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, matrix.length, finData, true);
         }
       }
       continue;
@@ -1039,6 +1437,10 @@ export function renderTemplatePreviewBlocks(
         text = `8. Source of Repayment: ${memo.sourceOfRepayment}`;
       } else if (/^12\.\s*Branch Visit Report\s*:/i.test(text) && nonEmpty(memo.branchVisitReport)) {
         text = `12. Branch Visit Report: ${memo.branchVisitReport}`;
+      } else if (/^13\.\s*Recommendation of The Branch\s*:/i.test(text) && nonEmpty(memo.sec13BranchRecommendation)) {
+        text = `${text}\n${memo.sec13BranchRecommendation}`;
+      } else if (/^14\.\s*Recommendation of Internal Control/i.test(text) && nonEmpty(memo.sec14IccdRecommendation)) {
+        text = `14. Recommendation of Internal Control & Compliance Division: ${memo.sec14IccdRecommendation}`;
       } else if (/^15\.\s*Observation and Recommendation of SAMD\s*:?/i.test(text) && nonEmpty(memo.samdObservation)) {
         text = `15. Observation and Recommendation of SAMD:\n${memo.samdObservation}`;
       }

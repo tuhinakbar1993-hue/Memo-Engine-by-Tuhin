@@ -1,6 +1,7 @@
 import type {
   AccountStatementData,
   BranchProposalData,
+  BranchProposalSource,
   CibReportData,
   CostOfFundData,
   DocumentKey,
@@ -199,6 +200,11 @@ export async function parseBranchProposalFile(
     onStage?.('Extracting proposal fields...');
     const grids = docx.tables.map((t) => t.rows);
     const parsed = parseBranchProposalFromStructured(grids, docx.lines, docx.rawText);
+    setCachedParse('bp_source', file, {
+      fileName: file.name,
+      rawText: docx.rawText,
+      pageImages: [],
+    } satisfies BranchProposalSource);
     return setCachedParse('bp', file, parsed);
   }
 
@@ -211,6 +217,11 @@ export async function parseBranchProposalFile(
     onStage?.('Extracting proposal fields...');
     const grids = excel.sheets.map((s) => s.typedRows);
     const parsed = parseBranchProposalFromStructured(grids, excel.lines, excel.rawText);
+    setCachedParse('bp_source', file, {
+      fileName: file.name,
+      rawText: excel.rawText,
+      pageImages: [],
+    } satisfies BranchProposalSource);
     return setCachedParse('bp', file, parsed);
   }
 
@@ -229,6 +240,13 @@ export async function parseBranchProposalFile(
     );
     onStage?.('Extracting proposal fields...');
     const parsed = parseBranchProposalFromPdf(lines, rawText);
+    const base64 = dataUrl.split(',')[1] ?? '';
+    setCachedParse('bp_source', file, {
+      sourceId: getFileSignature('src', file),
+      fileName: file.name,
+      rawText,
+      pageImages: base64 ? [{ mimeType: file.type || 'image/jpeg', data: base64 }] : [],
+    } satisfies BranchProposalSource);
     return setCachedParse('bp', file, parsed);
   }
 
@@ -238,6 +256,7 @@ export async function parseBranchProposalFile(
   if (rawText.trim().length >= 80) {
     onStage?.('Extracting tables & fields...');
     const parsed = parseBranchProposalFromPdf(lines, rawText);
+    setCachedParse('bp_raw', file, rawText);
     return setCachedParse('bp', file, parsed);
   }
 
@@ -256,7 +275,111 @@ export async function parseBranchProposalFile(
   );
   onStage?.('Extracting tables & fields...');
   const parsed = parseBranchProposalFromPdf(ocrResult.lines, ocrResult.rawText);
+    setCachedParse('bp_source', file, {
+      sourceId: getFileSignature('src', file),
+      fileName: file.name,
+      rawText: ocrResult.rawText,
+      pageImages: rendered.map((r) => ({ mimeType: r.mimeType, data: r.data })),
+    } satisfies BranchProposalSource);
   return setCachedParse('bp', file, parsed);
+}
+
+const inFlightSourcePrep = new Map<string, Promise<BranchProposalSource>>();
+
+/**
+ * Prepares the full Branch Proposal source (raw text + rendered page images for PDFs/images)
+ * with promise deduplication & stable sourceId for instant repeated/parallel AI scrutiny.
+ */
+export async function prepareBranchProposalSource(file: File): Promise<BranchProposalSource> {
+  const cached = getCachedParse<BranchProposalSource>('bp_source', file);
+  if (cached) return cached;
+
+  const sig = getFileSignature('bp_source', file);
+  const existingPromise = inFlightSourcePrep.get(sig);
+  if (existingPromise) return existingPromise;
+
+  const sourceId = getFileSignature('src', file);
+
+  const task = (async (): Promise<BranchProposalSource> => {
+    if (isDocxFile(file)) {
+      const docx = await extractDocxContent(file);
+      return setCachedParse('bp_source', file, {
+        sourceId,
+        fileName: file.name,
+        rawText: docx.rawText,
+        pageImages: [],
+      });
+    }
+
+    if (isExcelFile(file)) {
+      const excel = await extractExcelContent(file);
+      return setCachedParse('bp_source', file, {
+        sourceId,
+        fileName: file.name,
+        rawText: excel.rawText,
+        pageImages: [],
+      });
+    }
+
+    if (file.type.startsWith('image/')) {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('Failed to read image file.'));
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(',')[1] ?? '';
+      const rawText = getCachedParse<string>('bp_raw', file) ?? '';
+      return setCachedParse('bp_source', file, {
+        sourceId,
+        fileName: file.name,
+        rawText,
+        pageImages: base64 ? [{ mimeType: file.type || 'image/jpeg', data: base64 }] : [],
+      });
+    }
+
+    // PDF: reuse cached rawText if already parsed and render JPEG page images in parallel
+    let rawText = getCachedParse<string>('bp_raw', file);
+    const [extractedText, rendered] = await Promise.all([
+      rawText === undefined ? extractPdfLines(file).then((r) => r.rawText) : Promise.resolve(rawText),
+      renderPdfPagesToImages(file, 1200, 12),
+    ]);
+    if (rawText === undefined) {
+      rawText = extractedText;
+      setCachedParse('bp_raw', file, rawText);
+    }
+
+    return setCachedParse('bp_source', file, {
+      sourceId,
+      fileName: file.name,
+      rawText,
+      pageImages: rendered.map((r) => ({ mimeType: r.mimeType, data: r.data })),
+    });
+  })();
+
+  inFlightSourcePrep.set(sig, task);
+  try {
+    return await task;
+  } finally {
+    inFlightSourcePrep.delete(sig);
+  }
+}
+
+/**
+ * Warms Branch Proposal multimodal page images asynchronously right after upload so
+ * AI section generation has near-zero document preparation latency.
+ */
+export function warmBranchProposalSource(file: File): void {
+  const trigger = () => {
+    void prepareBranchProposalSource(file).catch(() => {
+      // Ignore background warmup failures; on-demand call handles errors cleanly
+    });
+  };
+  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    window.requestIdleCallback(trigger);
+  } else {
+    setTimeout(trigger, 0);
+  }
 }
 
 /**

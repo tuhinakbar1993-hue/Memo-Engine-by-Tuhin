@@ -1,25 +1,81 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
 import type {
   AiSectionsData,
+  BatchScrutinyState,
   MemoDocType,
   MemoTemplateRecord,
   ResolvedICMemo,
+  ScrutinySectionKey,
+  Section2AiData,
+  Section3AiData,
+  Section4AiData,
+  Section5AiData,
+  Section6AiData,
+  Section7AiData,
+  Section9AiData,
+  Section10AiData,
+  Section10Particulars,
+  Section11AiData,
 } from '../types/memo';
 import { TemplateManagerPanel } from './TemplateManagerPanel';
 import { ValidationPanel } from './ValidationPanel';
+
+const SECTION_LABELS: Record<ScrutinySectionKey, string> = {
+  justification: 'Justification of The Proposed Facility',
+  sec1NatureOfBusiness: '1. Nature of Business',
+  sec2LiabilityOurBank: '2. Liability Position with Our Bank',
+  sec3LiabilityOtherUnits: '3. Liability with Other Units / Banks',
+  sec4CibStatus: '4. CIB Status',
+  sec5LegalAction: '5. Legal Action Status',
+  sec6AuditCompliance: '6. Audit, Compliance & Regulatory Status',
+  sec7Security: '7. Security',
+  sec8SourceOfRepayment: '8. Source of Repayment',
+  sec9HoSanctions: '9. Sequence of Head Office Sanction(s)',
+  sec10ClientParticulars: '10. Brief Particulars of The Client',
+  sec11Financials: '11. Financials of The Client',
+  branchVisit: '12. Branch Visit Report',
+  sec13BranchRecommendation: '13. Recommendation of The Branch',
+  sec14IccdRecommendation: '14. Recommendation of ICCD',
+  samdObservation: '15. Observation and Recommendation of SAMD',
+};
 
 interface ICMemoPreviewProps {
   memo: ResolvedICMemo;
   aiSections: AiSectionsData;
   overrides: Record<string, string>;
   onOverrideChange: (code: string, value: string) => void;
-  onGenerateAiSection: (section: 'justification' | 'branchVisit' | 'samdObservation') => Promise<void>;
-  onUpdateAiSection: (section: 'justification' | 'branchVisit' | 'samdObservation', value: string | null) => void;
-  generatingSection: 'justification' | 'branchVisit' | 'samdObservation' | null;
+  onScrutinizeSection: (section: ScrutinySectionKey, forceOverwrite?: boolean) => Promise<void>;
+  onRetrySection: (section: ScrutinySectionKey) => Promise<void>;
+  onScrutinizeAll: () => Promise<void>;
+  onDismissBatchSummary: () => void;
+  batchScrutiny: BatchScrutinyState;
+  onUpdateAiSections: (
+    updater: (prev: AiSectionsData) => AiSectionsData,
+    markManualSection?: ScrutinySectionKey
+  ) => void;
+  manualEditedSections: Partial<Record<ScrutinySectionKey, boolean>>;
+  sourceOfRepaymentManual: string;
+  onManualSourceOfRepaymentChange: (value: string) => void;
+  scrutinizingSection: ScrutinySectionKey | null;
+  hasBranchProposal: boolean;
   aiError: string | null;
   onDownloadDocx: () => Promise<void>;
+  onDownloadPdf: () => Promise<void>;
   downloading: boolean;
+  downloadingPdf: boolean;
   templates: Record<MemoDocType, MemoTemplateRecord | null>;
   onUploadTemplate: (docType: MemoDocType, file: File) => Promise<void>;
   onRemoveTemplate: (docType: MemoDocType) => Promise<void>;
@@ -45,17 +101,159 @@ const Token: React.FC<{ ph: Record<string, string>; code: string; bold?: boolean
   return <span className={bold ? 'font-bold' : ''}>{val}</span>;
 };
 
+interface SectionToolbarProps {
+  sectionKey: ScrutinySectionKey;
+  editing: boolean;
+  onToggleEdit: () => void;
+  scrutinizingSection: ScrutinySectionKey | null;
+  batchRunning: boolean;
+  isRetrying: boolean;
+  failedError: string | null;
+  insufficientReason: string | null;
+  isManualProtected: boolean;
+  confirmOverwrite: boolean;
+  onRequestScrutiny: () => void;
+  onRetry: () => void;
+  onConfirmOverwrite: () => void;
+  onCancelOverwrite: () => void;
+}
+
+const SectionActionToolbar: React.FC<SectionToolbarProps> = ({
+  sectionKey,
+  editing,
+  onToggleEdit,
+  scrutinizingSection,
+  batchRunning,
+  isRetrying,
+  failedError,
+  insufficientReason,
+  isManualProtected,
+  confirmOverwrite,
+  onRequestScrutiny,
+  onRetry,
+  onConfirmOverwrite,
+  onCancelOverwrite,
+}) => {
+  const isRunning = scrutinizingSection === sectionKey || isRetrying;
+  const anyRunning = scrutinizingSection !== null || batchRunning;
+
+  return (
+    <div className="font-sans space-y-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap justify-end">
+        <button
+          type="button"
+          onClick={onToggleEdit}
+          className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors ${
+            editing
+              ? 'text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border-emerald-400'
+              : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+          }`}
+        >
+          <Pencil className="w-3 h-3" />
+          <span>{editing ? 'Done Editing' : 'Edit'}</span>
+        </button>
+
+        {(failedError || isRetrying) && (
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={isRetrying || batchRunning || scrutinizingSection !== null}
+            title={failedError || 'Retry AI scrutiny for this section'}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded cursor-pointer disabled:opacity-60 transition-colors whitespace-nowrap"
+          >
+            {isRetrying ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RotateCcw className="w-3 h-3" />
+            )}
+            <span>{isRetrying ? 'Retrying...' : 'Retry'}</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={onRequestScrutiny}
+          disabled={anyRunning || isRetrying}
+          title={
+            isManualProtected
+              ? 'This section has manual edits — clicking will ask before overwriting'
+              : 'Scrutinize uploaded Branch Proposal and populate this section with AI'
+          }
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded cursor-pointer disabled:opacity-60 transition-colors whitespace-nowrap"
+        >
+          {isRunning ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="w-3.5 h-3.5" />
+          )}
+          <span>{isRunning ? 'Scrutinizing...' : 'Scrutinize and Fill Up Through AI'}</span>
+        </button>
+      </div>
+
+      {failedError && !isRetrying && (
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-red-50 border border-red-200 rounded px-2.5 py-1 text-[11px] text-red-800">
+          <span>{failedError}</span>
+        </div>
+      )}
+
+      {!failedError && insufficientReason && (
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-50 border border-amber-200 rounded px-2.5 py-1 text-[11px] text-amber-900">
+          <span>{insufficientReason}</span>
+        </div>
+      )}
+
+      {confirmOverwrite && (
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-50 border border-amber-300 rounded px-2.5 py-1.5 text-[11px] text-amber-950">
+          <div className="flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+            <span>
+              This section contains manually entered or edited content. Overwrite it with AI scrutiny?
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onConfirmOverwrite}
+              disabled={anyRunning}
+              className="px-2 py-0.5 font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded cursor-pointer disabled:opacity-60"
+            >
+              Yes, Overwrite
+            </button>
+            <button
+              type="button"
+              onClick={onCancelOverwrite}
+              className="px-2 py-0.5 font-medium text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
   memo,
   aiSections,
   overrides,
   onOverrideChange,
-  onGenerateAiSection,
-  onUpdateAiSection,
-  generatingSection,
+  onScrutinizeSection,
+  onRetrySection,
+  onScrutinizeAll,
+  onDismissBatchSummary,
+  batchScrutiny,
+  onUpdateAiSections,
+  manualEditedSections,
+  sourceOfRepaymentManual,
+  onManualSourceOfRepaymentChange,
+  scrutinizingSection,
+  hasBranchProposal,
   aiError,
   onDownloadDocx,
+  onDownloadPdf,
   downloading,
+  downloadingPdf,
   templates,
   onUploadTemplate,
   onRemoveTemplate,
@@ -66,18 +264,64 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
   const ph = memo.placeholders;
   const bp = memo.branchProposal;
 
-  const [editingJustification, setEditingJustification] = useState(false);
-  const [editingBranchVisit, setEditingBranchVisit] = useState(false);
-  const [editingSamd, setEditingSamd] = useState(false);
+  const [editingSections, setEditingSections] = useState<Partial<Record<ScrutinySectionKey, boolean>>>({});
+  const [confirmOverwriteSection, setConfirmOverwriteSection] = useState<ScrutinySectionKey | null>(null);
 
   useEffect(() => {
     if (applySignal > 0) {
-      setEditingJustification(false);
-      setEditingBranchVisit(false);
-      setEditingSamd(false);
+      setEditingSections({});
+      setConfirmOverwriteSection(null);
     }
   }, [applySignal]);
 
+  const toggleEditing = (key: ScrutinySectionKey) => {
+    setEditingSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const isEditing = (key: ScrutinySectionKey) => Boolean(editingSections[key]);
+
+  const isProtectedSection = (key: ScrutinySectionKey): boolean => {
+    if (manualEditedSections[key]) return true;
+    if (key === 'sec8SourceOfRepayment' && sourceOfRepaymentManual.trim() !== '') return true;
+    return false;
+  };
+
+  const handleRequestScrutiny = (key: ScrutinySectionKey) => {
+    if (isProtectedSection(key)) {
+      setConfirmOverwriteSection(key);
+      return;
+    }
+    setConfirmOverwriteSection(null);
+    void onScrutinizeSection(key, false);
+  };
+
+  const handleConfirmOverwrite = (key: ScrutinySectionKey) => {
+    setConfirmOverwriteSection(null);
+    void onScrutinizeSection(key, true);
+  };
+
+  const toolbarProps = (key: ScrutinySectionKey): SectionToolbarProps => {
+    const failEntry = batchScrutiny.failedSections.find((f) => f.section === key);
+    const insuffEntry = batchScrutiny.insufficientSections.find((i) => i.section === key);
+    return {
+      sectionKey: key,
+      editing: isEditing(key),
+      onToggleEdit: () => toggleEditing(key),
+      scrutinizingSection,
+      batchRunning: batchScrutiny.running,
+      isRetrying: batchScrutiny.retryingSections.includes(key),
+      failedError: failEntry ? failEntry.error : null,
+      insufficientReason: insuffEntry ? insuffEntry.reason : null,
+      isManualProtected: isProtectedSection(key),
+      confirmOverwrite: confirmOverwriteSection === key,
+      onRequestScrutiny: () => handleRequestScrutiny(key),
+      onRetry: () => void onRetrySection(key),
+      onConfirmOverwrite: () => handleConfirmOverwrite(key),
+      onCancelOverwrite: () => setConfirmOverwriteSection(null),
+    };
+  };
+
+  // Default fallback structures preserving the official IC Memo layout
   const defaultCibStatuses = [
     'STD',
     'SMA',
@@ -179,6 +423,32 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
 
   const sp = bp?.section10Particulars;
 
+  const emptyParticulars = (): Section10Particulars => ({
+    nameOfClient: sp?.nameOfClient || '',
+    uniqueCustomerId: sp?.uniqueCustomerId || '',
+    awcdMsdAccount: sp?.awcdMsdAccount || '',
+    businessTypeNature: sp?.businessTypeNature || '',
+    businessManagementType: sp?.businessManagementType || '',
+    clientType: sp?.clientType || '',
+    keyPersonPhone: sp?.keyPersonPhone || '',
+    address: sp?.address || '',
+    officeBusinessAddress: sp?.officeBusinessAddress || '',
+    factoryAddress: sp?.factoryAddress || '',
+    purposeOfInvestment: sp?.purposeOfInvestment || '',
+    limitOfInvestment: sp?.limitOfInvestment || '',
+    modeOfInvestment: sp?.modeOfInvestment || '',
+    lastVisitDate: sp?.lastVisitDate || '',
+    stockPosition: sp?.stockPosition || '',
+    fixedAsset: sp?.fixedAsset || '',
+    businessNetWorth: sp?.businessNetWorth || '',
+    insuranceCoverage: sp?.insuranceCoverage || '',
+    tradeLicenseValidity: sp?.tradeLicenseValidity || '',
+    otherRegulatoryDocuments: sp?.otherRegulatoryDocuments || '',
+    dateOfOriginalInvestment: sp?.dateOfOriginalInvestment || '',
+    firstDisbursementManager: sp?.firstDisbursementManager || '',
+    firstDateOfClassification: sp?.firstDateOfClassification || '',
+  });
+
   const dirRows =
     bp?.section10Directors && bp.section10Directors.length > 0
       ? bp.section10Directors
@@ -204,6 +474,90 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
           { year: '', grossSales: '', grossProfit: '', netProfit: '', totalAsset: '', totalLiabilities: '', netWorth: '' },
         ];
 
+  // Snapshot initializers when editing structured sections cleanly
+  const currentSec2 = (cur: AiSectionsData['sec2LiabilityOurBank']): Section2AiData =>
+    cur ?? {
+      limit: ph['#56#'] || bp?.sec2Limit || '',
+      validity: ph['#58#'] || bp?.sec2Validity || '',
+      remarks: bp?.sec2Remarks || '',
+      nonFundedNote: memo.sec2NonFundedNote || '',
+      summary: memo.sectionSummaries.sec2LiabilityOurBank || '',
+    };
+
+  const currentSec3 = (cur: AiSectionsData['sec3LiabilityOtherUnits']): Section3AiData =>
+    cur ?? {
+      rows: rawSec3Rows.map((r) => ({ ...r })),
+      summary: memo.sectionSummaries.sec3LiabilityOtherUnits || '',
+    };
+
+  const currentSec4 = (cur: AiSectionsData['sec4CibStatus']): Section4AiData =>
+    cur ?? {
+      cibDate: ph['#62#'] || bp?.section4CibDate || '',
+      rows: sec4Rows.map((r) => ({ ...r })),
+      summary: memo.sectionSummaries.sec4CibStatus || '',
+    };
+
+  const currentSec5 = (cur: AiSectionsData['sec5LegalAction']): Section5AiData =>
+    cur ?? {
+      statusNote: bp?.section5StatusNote || '',
+      rows: sec5Rows.map((r) => ({ ...r })),
+      summary: memo.sectionSummaries.sec5LegalAction || '',
+    };
+
+  const currentSec6 = (cur: AiSectionsData['sec6AuditCompliance']): Section6AiData =>
+    cur ?? {
+      statusNote: bp?.section6StatusNote || '',
+      rows: sec6Rows.map((r) => ({ ...r })),
+      summary: memo.sectionSummaries.sec6AuditCompliance || '',
+    };
+
+  const currentSec7 = (cur: AiSectionsData['sec7Security']): Section7AiData =>
+    cur ?? {
+      primaryNote: bp?.section7PrimaryNote || '',
+      primaryRows: sec7Primary.map((r) => ({ ...r })),
+      primaryTotal: bp?.section7PrimaryTotal || '',
+      collateralNote: bp?.section7CollateralNote || '',
+      collateralSchedules: [...sec7Schedules],
+      valuationRows: sec7ValRows.map((r) => ({ ...r })),
+      coveragePct: bp?.section7CoveragePct || '',
+      othersNote: memo.sec7OthersNote || '',
+      summary: memo.sectionSummaries.sec7Security || '',
+    };
+
+  const currentSec9 = (cur: AiSectionsData['sec9HoSanctions']): Section9AiData =>
+    cur ?? {
+      rows: sec9Rows.map((r) => ({ ...r })),
+      summary: memo.sectionSummaries.sec9HoSanctions || '',
+    };
+
+  const currentSec10 = (cur: AiSectionsData['sec10ClientParticulars']): Section10AiData =>
+    cur ?? {
+      particulars: emptyParticulars(),
+      directors: dirRows.map((d) => ({ ...d })),
+      bankDirectors: bankDirRows.map((b) => ({ ...b })),
+      summary: memo.sectionSummaries.sec10ClientParticulars || '',
+    };
+
+  const currentSec11 = (cur: AiSectionsData['sec11Financials']): Section11AiData =>
+    cur ?? {
+      financialsNote: bp?.section11FinancialsNote || '',
+      rows: finRows.map((r) => ({ ...r })),
+      summary: memo.sectionSummaries.sec11Financials || '',
+    };
+
+  const updateNarrativeAi = (
+    key:
+      | 'justification'
+      | 'sec1NatureOfBusiness'
+      | 'branchVisit'
+      | 'sec13BranchRecommendation'
+      | 'sec14IccdRecommendation'
+      | 'samdObservation',
+    val: string
+  ) => {
+    onUpdateAiSections((prev) => ({ ...prev, [key]: val }), key);
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Top Preview Controls */}
@@ -211,11 +565,34 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
         <div>
           <h2 className="font-display text-lg font-bold text-slate-900">IC Memo Live Preview</h2>
           <p className="text-xs text-slate-500">
-            Replicates the official Investment Committee A4 layout. Use inline Generate buttons for AI-assisted sections before downloading.
+            Replicates the official Investment Committee A4 layout. Populate individual sections or generate all applicable sections together from the uploaded Branch Proposal.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            type="button"
+            onClick={() => void onScrutinizeAll()}
+            disabled={!hasBranchProposal || batchScrutiny.running || scrutinizingSection !== null}
+            title={
+              !hasBranchProposal
+                ? 'Upload the Branch Proposal on Manual Inputs first'
+                : 'Scrutinize the uploaded Branch Proposal and populate all applicable sections in parallel (preserves manual edits)'
+            }
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer disabled:opacity-55 whitespace-nowrap shrink-0"
+          >
+            {batchScrutiny.running ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4 text-emerald-400" />
+            )}
+            <span>
+              {batchScrutiny.running
+                ? `Generating (${batchScrutiny.completedSections.length}/${batchScrutiny.total})...`
+                : 'Generate and Fill Up All Together'}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={onApplyAllChanges}
@@ -232,8 +609,8 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
           <button
             type="button"
             onClick={onDownloadDocx}
-            disabled={downloading}
-            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+            disabled={downloading || downloadingPdf}
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
           >
             {downloading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -242,8 +619,216 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             )}
             <span>{downloading ? 'Building .docx...' : 'Download .docx'}</span>
           </button>
+
+          <button
+            type="button"
+            onClick={onDownloadPdf}
+            disabled={downloading || downloadingPdf}
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+          >
+            {downloadingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>{downloadingPdf ? 'Rendering .pdf...' : 'Download .pdf'}</span>
+          </button>
         </div>
       </div>
+
+      {/* Coordinated Batch Generation Progress & Result Summary (Status stays outside final memo document) */}
+      {(batchScrutiny.running ||
+        batchScrutiny.total > 0 ||
+        batchScrutiny.failedSections.length > 0 ||
+        batchScrutiny.insufficientSections.length > 0 ||
+        batchScrutiny.skippedManualSections.length > 0) && (() => {
+        const insufficientKeys = new Set(batchScrutiny.insufficientSections.map((i) => i.section));
+        const failedKeys = new Set(batchScrutiny.failedSections.map((f) => f.section));
+        const cleanlyPopulated = batchScrutiny.completedSections.filter(
+          (s) => !insufficientKeys.has(s) && !failedKeys.has(s)
+        );
+        return (
+          <div
+            className={`border rounded-lg px-4 py-3 text-xs space-y-3 ${
+              batchScrutiny.running
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                : batchScrutiny.failedSections.length > 0 ||
+                    batchScrutiny.insufficientSections.length > 0
+                  ? 'bg-amber-50/80 border-amber-200 text-slate-900'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-950'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 font-semibold">
+                {batchScrutiny.running ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-emerald-700 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                )}
+                <span>
+                  {batchScrutiny.running
+                    ? `Generating and populating sections in parallel: ${
+                        batchScrutiny.completedSections.length + batchScrutiny.failedSections.length
+                      } of ${batchScrutiny.total} processed`
+                    : batchScrutiny.total === 0
+                      ? 'All sections already have manually edited content; nothing was overwritten.'
+                      : `Batch generation finished: ${cleanlyPopulated.length} populated cleanly${
+                          batchScrutiny.failedSections.length > 0
+                            ? `, ${batchScrutiny.failedSections.length} require retry`
+                            : ''
+                        }${
+                          batchScrutiny.insufficientSections.length > 0
+                            ? `, ${batchScrutiny.insufficientSections.length} with unavailable source info`
+                            : ''
+                        }.`}
+                </span>
+              </div>
+
+              {!batchScrutiny.running && (
+                <button
+                  type="button"
+                  onClick={onDismissBatchSummary}
+                  aria-label="Dismiss batch summary"
+                  className="p-1 text-slate-500 hover:text-slate-800 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {batchScrutiny.total > 0 && (
+              <div className="w-full h-1.5 bg-white/80 border border-emerald-200/70 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-700 transition-all duration-200"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(
+                        ((batchScrutiny.completedSections.length +
+                          batchScrutiny.failedSections.length) /
+                          batchScrutiny.total) *
+                          100
+                      )
+                    )}%`,
+                  }}
+                />
+              </div>
+            )}
+
+            {cleanlyPopulated.length > 0 && (
+              <div className="space-y-1">
+                <p className="font-semibold text-[11px] text-emerald-900">
+                  Successfully Populated Sections ({cleanlyPopulated.length}):
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {cleanlyPopulated.map((s) => (
+                    <span
+                      key={s}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100/80 border border-emerald-300/70 text-emerald-950 rounded text-[11px]"
+                    >
+                      <CheckCircle2 className="w-3 h-3 text-emerald-700 shrink-0" />
+                      <span>{SECTION_LABELS[s]}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {batchScrutiny.failedSections.length > 0 && (
+              <div className="bg-white/90 border border-red-200 rounded-md p-2.5 space-y-1.5">
+                <p className="font-semibold text-[11px] text-red-900">
+                  Sections Requiring Retry ({batchScrutiny.failedSections.length}):
+                </p>
+                <div className="divide-y divide-red-100">
+                  {batchScrutiny.failedSections.map((f) => {
+                    const isRetrying = batchScrutiny.retryingSections.includes(f.section);
+                    return (
+                      <div
+                        key={f.section}
+                        className="py-1.5 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <div className="text-[11px] text-red-900">
+                          <span className="font-semibold">{SECTION_LABELS[f.section]}:</span>{' '}
+                          <span>{f.error}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void onRetrySection(f.section)}
+                          disabled={isRetrying || batchScrutiny.running}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+                        >
+                          {isRetrying ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <RotateCcw className="w-3 h-3" />
+                          )}
+                          <span>{isRetrying ? 'Retrying...' : 'Retry'}</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {batchScrutiny.insufficientSections.length > 0 && (
+              <div className="bg-white/90 border border-amber-300 rounded-md p-2.5 space-y-1.5">
+                <p className="font-semibold text-[11px] text-amber-950">
+                  Unavailable / Insufficient Source Information in Branch Proposal ({batchScrutiny.insufficientSections.length}):
+                </p>
+                <div className="divide-y divide-amber-100">
+                  {batchScrutiny.insufficientSections.map((item) => {
+                    const isRetrying = batchScrutiny.retryingSections.includes(item.section);
+                    return (
+                      <div
+                        key={item.section}
+                        className="py-1.5 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <div className="text-[11px] text-amber-950">
+                          <span className="font-semibold">{SECTION_LABELS[item.section]}:</span>{' '}
+                          <span>{item.reason}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void onRetrySection(item.section)}
+                          disabled={isRetrying || batchScrutiny.running}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+                        >
+                          {isRetrying ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <RotateCcw className="w-3 h-3" />
+                          )}
+                          <span>{isRetrying ? 'Retrying...' : 'Retry'}</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {batchScrutiny.skippedManualSections.length > 0 && (
+              <p className="text-[11px] text-slate-700">
+                <span className="font-semibold">
+                  Preserved manual edits ({batchScrutiny.skippedManualSections.length}):
+                </span>{' '}
+                {batchScrutiny.skippedManualSections.map((s) => SECTION_LABELS[s]).join(', ')}{' '}
+                — left untouched without overwrite; use each section&apos;s individual AI button if you want to regenerate it.
+              </p>
+            )}
+          </div>
+        );
+      })()}
+
+      {!hasBranchProposal && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-2.5 text-xs flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+          <span>
+            Upload the <span className="font-semibold">Branch Proposal</span> on the Manual Inputs tab before clicking <span className="font-semibold">“Scrutinize and Fill Up Through AI”</span> or <span className="font-semibold">“Generate and Fill Up All Together”</span>.
+          </span>
+        </div>
+      )}
 
       {/* Default Format Template Control for IC Memo */}
       <TemplateManagerPanel
@@ -595,42 +1180,20 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             </table>
           </div>
 
-          {/* Justification of The Proposed Facility (AI Generate #51#) */}
-          <div className="space-y-0.5 text-[10pt]">
-            <div className="flex items-center justify-between gap-3">
-              <p className="font-bold underline">Justification of The Proposed Facility:</p>
-              <div className="flex items-center gap-2 font-sans">
-                {aiSections.justification !== null && (
-                  <button
-                    type="button"
-                    onClick={() => setEditingJustification((v) => !v)}
-                    className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded border border-slate-300 cursor-pointer"
-                  >
-                    {editingJustification ? 'Done Editing' : 'Edit Text'}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onGenerateAiSection('justification')}
-                  disabled={generatingSection !== null}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded cursor-pointer disabled:opacity-60"
-                >
-                  {generatingSection === 'justification' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5" />
-                  )}
-                  <span>{aiSections.justification !== null ? 'Regenerate' : 'Generate'}</span>
-                </button>
-              </div>
+          {/* SECTION 0: Justification of The Proposed Facility */}
+          <div className="space-y-1 text-[10pt]">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline pt-0.5">Justification of The Proposed Facility:</p>
+              <SectionActionToolbar {...toolbarProps('justification')} />
             </div>
 
             <div className="pl-2 space-y-0.5">
-              {editingJustification ? (
+              {isEditing('justification') ? (
                 <textarea
                   rows={4}
-                  value={aiSections.justification ?? ''}
-                  onChange={(e) => onUpdateAiSection('justification', e.target.value)}
+                  value={aiSections.justification ?? memo.justificationLines}
+                  onChange={(e) => updateNarrativeAi('justification', e.target.value)}
+                  placeholder="Enter justification points or click Scrutinize and Fill Up Through AI..."
                   className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
                 />
               ) : (
@@ -647,670 +1210,2073 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             Previous Board Decision(s) Regarding Rescheduling/Waiver/Written-Off: Nil
           </p>
 
-          {/* Section 1 */}
-          <div className="border border-dotted border-black px-2 py-0.5 font-bold text-[10pt]">
-            1. Nature of Business: <Token ph={ph} code="#54#" />
+          {/* SECTION 1: Nature of Business */}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="border border-dotted border-black px-2 py-0.5 font-bold text-[10pt] flex-1 min-w-[220px]">
+                1. Nature of Business: <Token ph={ph} code="#54#" />
+              </div>
+              <SectionActionToolbar {...toolbarProps('sec1NatureOfBusiness')} />
+            </div>
+            {isEditing('sec1NatureOfBusiness') && (
+              <div className="font-sans">
+                <input
+                  type="text"
+                  value={aiSections.sec1NatureOfBusiness ?? ph['#54#'] ?? ''}
+                  onChange={(e) => updateNarrativeAi('sec1NatureOfBusiness', e.target.value)}
+                  placeholder="Enter Nature of Business..."
+                  className="w-full text-xs px-2.5 py-1.5 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
+                />
+              </div>
+            )}
           </div>
 
-          {/* Section 2 */}
+          {/* SECTION 2: Liability Position of the Clients and Its Sister Concerns with Our Bank */}
           <div className="space-y-1">
-            <p className="font-bold text-[10pt]">
-              2. Liability Position of the Clients and Its Sister Concerns with Our Bank as on{' '}
-              <Token ph={ph} code="#68#" />:
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5">Name of the Concern</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Mode of Investment</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Limit</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Outstanding</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Validity</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Overdue</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">
-                    Recovery in existing deals till date [Mode wise]
-                  </th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Remarks</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td rowSpan={4} className="border border-dotted border-black px-1.5 py-0.5 font-bold">
-                    <Token ph={ph} code="#2#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 font-bold">
-                    <div>
-                      <Token ph={ph} code="#55#" />
-                    </div>
-                    <div>Funded</div>
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#56#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#25#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#58#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#59#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#60#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">
-                    {bp?.sec2Remarks || ''}
-                  </td>
-                </tr>
-                <tr className="h-4">
-                  <td className="border border-dotted border-black px-1.5 py-0.5">&nbsp;</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                </tr>
-                <tr className="h-4">
-                  <td className="border border-dotted border-black px-1.5 py-0.5">&nbsp;</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 font-bold">Non Funded</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                </tr>
-                <tr>
-                  <td colSpan={2} className="border border-dotted border-black px-1.5 py-0.5 font-bold text-center">
-                    Total
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#56#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#25#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#58#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#59#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
-                    <Token ph={ph} code="#60#" />
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5"></td>
-                </tr>
-              </tbody>
-            </table>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold text-[10pt] pt-0.5">
+                2. Liability Position of the Clients and Its Sister Concerns with Our Bank as on{' '}
+                <Token ph={ph} code="#68#" />:
+              </p>
+              <SectionActionToolbar {...toolbarProps('sec2LiabilityOurBank')} />
+            </div>
+
+            {isEditing('sec2LiabilityOurBank') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2.5 space-y-2 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">Limit (#56#)</span>
+                    <input
+                      type="text"
+                      value={currentSec2(aiSections.sec2LiabilityOurBank).limit}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec2LiabilityOurBank: {
+                              ...currentSec2(prev.sec2LiabilityOurBank),
+                              limit: e.target.value,
+                            },
+                          }),
+                          'sec2LiabilityOurBank'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">Validity (#58#)</span>
+                    <input
+                      type="text"
+                      value={currentSec2(aiSections.sec2LiabilityOurBank).validity}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec2LiabilityOurBank: {
+                              ...currentSec2(prev.sec2LiabilityOurBank),
+                              validity: e.target.value,
+                            },
+                          }),
+                          'sec2LiabilityOurBank'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">Funded Remarks</span>
+                    <input
+                      type="text"
+                      value={currentSec2(aiSections.sec2LiabilityOurBank).remarks}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec2LiabilityOurBank: {
+                              ...currentSec2(prev.sec2LiabilityOurBank),
+                              remarks: e.target.value,
+                            },
+                          }),
+                          'sec2LiabilityOurBank'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Non-Funded / Sister Concern Note</span>
+                  <input
+                    type="text"
+                    value={currentSec2(aiSections.sec2LiabilityOurBank).nonFundedNote}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec2LiabilityOurBank: {
+                            ...currentSec2(prev.sec2LiabilityOurBank),
+                            nonFundedNote: e.target.value,
+                          },
+                        }),
+                        'sec2LiabilityOurBank'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 2 AI/Manual Summary Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec2(aiSections.sec2LiabilityOurBank).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec2LiabilityOurBank: {
+                            ...currentSec2(prev.sec2LiabilityOurBank),
+                            summary: e.target.value,
+                          },
+                        }),
+                        'sec2LiabilityOurBank'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Concern</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Mode of Investment</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Limit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Outstanding</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Validity</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Overdue</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">
+                        Recovery in existing deals till date [Mode wise]
+                      </th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td rowSpan={4} className="border border-dotted border-black px-1.5 py-0.5 font-bold">
+                        <Token ph={ph} code="#2#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 font-bold">
+                        <div>
+                          <Token ph={ph} code="#55#" />
+                        </div>
+                        <div>Funded</div>
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#56#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#25#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#58#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#59#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#60#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">
+                        {bp?.sec2Remarks || ''}
+                      </td>
+                    </tr>
+                    <tr className="h-4">
+                      <td className="border border-dotted border-black px-1.5 py-0.5">&nbsp;</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                    </tr>
+                    <tr className="h-4">
+                      <td className="border border-dotted border-black px-1.5 py-0.5">&nbsp;</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 font-bold">Non Funded</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">
+                        {memo.sec2NonFundedNote || ''}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colSpan={2} className="border border-dotted border-black px-1.5 py-0.5 font-bold text-center">
+                        Total
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#56#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#25#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#58#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#59#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
+                        <Token ph={ph} code="#60#" />
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5"></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </>
+            )}
           </div>
 
           <div className="border-t border-dashed border-slate-300 pt-2 text-right font-sans text-[10px] text-slate-400">
             Page Break — Section 3 begins on Page 2
           </div>
 
-          {/* Section 3 */}
+          {/* SECTION 3: Liability with Other Units of SIB */}
           <div className="space-y-1">
-            <p className="font-bold underline text-[10pt]">
-              3. Liability of the Client &amp; Its Sister/Allied Concerns with Other Units of SIB:
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5">SL</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Name of Concern</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Name of the Banks/NBFIs</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Nature of Facility</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Limit</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Outstanding with profit/Interest</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Overdue/EOL</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Expiry Date</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">CL Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rawSec3Rows.map((r, i) => (
-                  <tr key={i}>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.nameOfConcern}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.bankOrNbfi}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.natureOfFacility}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.limit}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.outstanding}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.overdueEol}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.expiryDate}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.clStatus}</td>
-                  </tr>
-                ))}
-                {!hasSec3SubTotal && (
-                  <tr>
-                    <td colSpan={4} className="border border-dotted border-black px-1 py-0.5 font-bold text-center">
-                      Sub-Total
-                    </td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                  </tr>
-                )}
-                {!hasSec3GrandTotal && (
-                  <tr>
-                    <td colSpan={4} className="border border-dotted border-black px-1 py-0.5 font-bold text-center">
-                      Grand Total
-                    </td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                    <td className="border border-dotted border-black px-1 py-0.5"></td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Section 4 */}
-          <div className="space-y-1">
-            <p className="font-bold text-[10pt]">
-              <span className="underline">4. CIB Status:</span> Report dated{' '}
-              <Token ph={ph} code="#62#" /> shows:
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th rowSpan={2} className="border border-dotted border-black px-1 py-0.5">STATUS</th>
-                  <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    With respective unit
-                  </th>
-                  <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    With Other Bank
-                  </th>
-                  <th rowSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    Remarks (Pls. give concern wise Breakup)
-                  </th>
-                </tr>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">Borrower</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">Guarantor</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">Borrower</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">Guarantor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sec4Rows.map((r, i) => (
-                  <tr key={i} className={/TOTAL/i.test(r.status) ? 'font-bold' : ''}>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{r.status}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.unitBorrower}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.unitGuarantor}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.otherBorrower}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.otherGuarantor}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{r.remarks}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Section 5 */}
-          <div className="space-y-1">
-            <p className="font-bold text-[10pt]">
-              <span className="underline">5. Legal Action Status as on Memo Date:</span>{' '}
-              {bp?.section5StatusNote || ''}
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5">Sl</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Type of Case</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Case No.</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Filling date</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Amount</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Previous date</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Next date</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Present status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sec5Rows.map((r, i) => {
-                  const isEmpty = !r.sl && !r.typeOfCase && !r.caseNo;
-                  return (
-                    <tr key={i} className={isEmpty ? 'h-9' : ''}>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.typeOfCase}</td>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.caseNo}</td>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.filingDate}</td>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.amount}</td>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.previousDate}</td>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.nextDate}</td>
-                      <td className="border border-dotted border-black px-1 py-0.5">{r.presentStatus}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Section 6 */}
-          <div className="space-y-1">
-            <p className="font-bold text-[10pt]">
-              <span className="underline">
-                6. Audit, Compliance and Regulatory Authority Related Status:
-              </span>{' '}
-              {bp?.section6StatusNote || ''}
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5">SL</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Name of the Authority</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Last Inspection / Report Date</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Objection Status (Yes/No)</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Objections (If yes)</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Branch Reply/ Current Position</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sec6Rows.map((r, i) => (
-                  <tr key={i}>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.authority}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.lastInspectionDate}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.objectionStatus}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.objections}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.branchReply}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Section 7 */}
-          <div className="space-y-1.5 text-[10pt]">
-            <p className="font-bold underline text-[10pt]">7. Security:</p>
-            <p className="font-bold pl-2">
-              <span className="underline">a. Primary:</span> {bp?.section7PrimaryNote || ''}
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-2 py-0.5 text-left w-[75%]">Particulars</th>
-                  <th className="border border-dotted border-black px-2 py-0.5 text-center w-[25%]">Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sec7Primary.map((r, i) => (
-                  <tr key={i}>
-                    <td className="border border-dotted border-black px-2 py-0.5">{r.particulars}</td>
-                    <td className="border border-dotted border-black px-2 py-0.5 text-center">{r.value}</td>
-                  </tr>
-                ))}
-                <tr className="font-bold">
-                  <td className="border border-dotted border-black px-2 py-0.5 text-center">
-                    Total value of primary security
-                  </td>
-                  <td className="border border-dotted border-black px-2 py-0.5 text-center">
-                    {bp?.section7PrimaryTotal || ''}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-
-            <p className="font-bold pl-2 pt-1">
-              <span className="underline">b. Collateral:</span> {bp?.section7CollateralNote || ''}
-            </p>
-            <div className="pl-2 space-y-0.5 text-[10pt]">
-              {sec7Schedules.map((s, i) => (
-                <p key={i}>{s}</p>
-              ))}
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline text-[10pt] pt-0.5">
+                3. Liability of the Client &amp; Its Sister/Allied Concerns with Other Units of SIB:
+              </p>
+              <SectionActionToolbar {...toolbarProps('sec3LiabilityOtherUnits')} />
             </div>
 
-            <table className="w-full text-[9pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th rowSpan={4} className="border border-dotted border-black px-1 py-1 align-middle">
-                    Schedule
-                  </th>
-                  <th colSpan={10} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    Value of the mortgaged properties as assessed
-                  </th>
-                </tr>
-                <tr>
-                  <th colSpan={4} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    At the time of allowing investment
-                  </th>
-                  <th colSpan={6} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    At present
-                  </th>
-                </tr>
-                <tr>
-                  <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    By Branch<br />on………..
-                  </th>
-                  <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    Surveyor<br />on……………..
-                  </th>
-                  <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    By Branch<br />on…………….
-                  </th>
-                  <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    Surveyor<br />on………….
-                  </th>
-                  <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
-                    By AV Cell<br />on……………
-                  </th>
-                </tr>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
-                  <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sec7ValRows.map((r, i) => (
-                  <tr key={i} className={/Grand/i.test(r.schedule) ? 'font-bold' : ''}>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.schedule}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.origBranchMv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.origBranchFsv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.origSurvMv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.origSurvFsv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.presBranchMv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.presBranchFsv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.presSurvMv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.presSurvFsv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.presAvMv}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.presAvFsv}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td colSpan={11} className="border border-dotted border-black px-2 py-0.5 text-center font-bold">
-                    Outstanding to Lowest Security value Coverage (%): {bp?.section7CoveragePct || '……………..%'}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-
-            <div className="pl-2 font-bold text-[10pt]">
-              <p>c. Others:</p>
-              <p className="pl-5">a. Usual Charge documents.</p>
-              <p className="pl-5">b. Acceptance of Branch Sanction by the Client.</p>
-            </div>
-          </div>
-
-          {/* Section 8 */}
-          <p className="text-[10pt]">
-            <span className="font-bold underline">8. Source of Repayment:</span>{' '}
-            {memo.sourceOfRepayment || (
-              <span className="text-slate-400 italic">[Enter in Manual Inputs]</span>
-            )}
-          </p>
-
-          {/* Section 9 */}
-          <div className="space-y-1">
-            <p className="font-bold underline text-[10pt]">9. Sequence of Head Office Sanction(S):</p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1.5 py-0.5 w-[7%]">SL</th>
-                  <th className="border border-dotted border-black px-1.5 py-0.5 w-[36%]">HO Sanction Reference No.</th>
-                  <th className="border border-dotted border-black px-1.5 py-0.5 w-[16%]">Date</th>
-                  <th className="border border-dotted border-black px-1.5 py-0.5 w-[15%]">Limit</th>
-                  <th className="border border-dotted border-black px-1.5 py-0.5 w-[26%]">Remarks</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sec9Rows.map((r, i) => (
-                  <tr key={i}>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{r.sl}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{r.referenceNo}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{r.date}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{r.limit}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{r.remarks}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Section 10 */}
-          <div className="space-y-2">
-            <p className="font-bold underline text-[10pt]">10. Brief Particulars of The Client:</p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <tbody>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[6%]">a.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[37%]">Name of the Client</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center w-[4%]">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[53%]">{sp?.nameOfClient || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">b.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Unique Customer ID</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.uniqueCustomerId || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">c.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">AWCD/MSD Account with opening date</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.awcdMsdAccount || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">d.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Business Type/Nature</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.businessTypeNature || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">e.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Business Management Type</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.businessManagementType || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">f.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Client Type</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.clientType || ''}</td>
-                </tr>
-                <tr>
-                  <td rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 align-middle">g.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Key Person with Phone No.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.keyPersonPhone || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Address</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.address || ''}</td>
-                </tr>
-                <tr>
-                  <td rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 align-middle">h.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Office/Business Address</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.officeBusinessAddress || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">Factory Address</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.factoryAddress || ''}</td>
-                </tr>
-                {[
-                  ['i.', 'Purpose of Investment', sp?.purposeOfInvestment || ''],
-                  ['j.', 'Limit of Investment', sp?.limitOfInvestment || ''],
-                  ['k.', 'Mode of Investment', sp?.modeOfInvestment || ''],
-                  ['l.', 'Last Visit Date', sp?.lastVisitDate || ''],
-                  ['m.', 'Stock Position', sp?.stockPosition || ''],
-                  ['n.', 'Fixed Asset', sp?.fixedAsset || ''],
-                  ['o.', 'Business Net Worth', sp?.businessNetWorth || ''],
-                  ['p.', 'Insurance Coverage', sp?.insuranceCoverage || ''],
-                  ['q.', 'Trade License & Validity', sp?.tradeLicenseValidity || ''],
-                  ['r', 'Other Regulatory Documents', sp?.otherRegulatoryDocuments || ''],
-                  ['s', 'Date of Original Investment', sp?.dateOfOriginalInvestment || ''],
-                ].map(([idx, label, val], i) => (
-                  <tr key={i}>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{idx}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{label}</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                    <td className="border border-dotted border-black px-1.5 py-0.5">{val}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">t.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">
-                    1<sup>st</sup> Disbursement Manager
-                  </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.firstDisbursementManager || ''}</td>
-                </tr>
-                <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">u.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">First Date of Classification with Status</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.firstDateOfClassification || ''}</td>
-                </tr>
-              </tbody>
-            </table>
-
-            <p className="font-bold underline text-[10pt]">
-              • Particular of the Proprietor/Partner/Directors:
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5">Name of the Directors</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Age</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Education</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Designation</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Share (%)</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Experience</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Net worth</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dirRows.map((d, i) => (
-                  <tr key={i} className={!d.name && !d.age ? 'h-6' : ''}>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.name}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.age}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.education}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.designation}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.sharePct}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.experience}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.netWorth}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <p className="font-bold underline text-[10pt]">
-              • Remarks: Director of any Bank/ FI/ Insurance company:
-            </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5">Name of the Director</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Name of the bank/NBFIs</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Designation/Position</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Percentage of Shares</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Number of Shares</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bankDirRows.map((d, i) => (
-                  <tr key={i} className={!d.name && !d.bankNbfi ? 'h-6' : ''}>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.name}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.bankNbfi}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.designation}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.sharePct}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{d.numShares}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Section 11 */}
-          <div className="space-y-1">
-            <p className="font-bold underline text-[10pt]">11. Financials of The Client:</p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
-              <thead>
-                <tr>
-                  <th className="border border-dotted border-black px-1 py-0.5">Year</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Gross Sales</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Gross Profit</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Net Profit</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Total Asset</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Total liabilities</th>
-                  <th className="border border-dotted border-black px-1 py-0.5">Net Worth</th>
-                </tr>
-              </thead>
-              <tbody>
-                {finRows.map((r, i) => (
-                  <tr key={i} className={!r.year && !r.grossSales ? 'h-6' : ''}>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.year}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.grossSales}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.grossProfit}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.netProfit}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.totalAsset}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.totalLiabilities}</td>
-                    <td className="border border-dotted border-black px-1 py-0.5">{r.netWorth}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Section 12 (AI Generate: third person) */}
-          <div className="space-y-1 text-[10pt]">
-            <div className="flex items-center justify-between gap-3">
-              <p className="font-bold underline">12. Branch Visit Report:</p>
-              <div className="flex items-center gap-2 font-sans">
-                {aiSections.branchVisit !== null && (
-                  <button
-                    type="button"
-                    onClick={() => setEditingBranchVisit((v) => !v)}
-                    className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded border border-slate-300 cursor-pointer"
-                  >
-                    {editingBranchVisit ? 'Done Editing' : 'Edit Text'}
-                  </button>
-                )}
+            {isEditing('sec3LiabilityOtherUnits') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2 space-y-2 text-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="text-[10px] text-slate-700">
+                        <th className="p-1 text-left">SL</th>
+                        <th className="p-1 text-left">Concern</th>
+                        <th className="p-1 text-left">Banks/NBFIs</th>
+                        <th className="p-1 text-left">Facility</th>
+                        <th className="p-1 text-left">Limit</th>
+                        <th className="p-1 text-left">Outstanding</th>
+                        <th className="p-1 text-left">Overdue/EOL</th>
+                        <th className="p-1 text-left">Expiry</th>
+                        <th className="p-1 text-left">CL Status</th>
+                        <th className="p-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSec3(aiSections.sec3LiabilityOtherUnits).rows.map((r, i) => (
+                        <tr key={i}>
+                          {(
+                            [
+                              'sl',
+                              'nameOfConcern',
+                              'bankOrNbfi',
+                              'natureOfFacility',
+                              'limit',
+                              'outstanding',
+                              'overdueEol',
+                              'expiryDate',
+                              'clStatus',
+                            ] as const
+                          ).map((field) => (
+                            <td key={field} className="p-0.5">
+                              <input
+                                type="text"
+                                value={r[field]}
+                                onChange={(e) =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec3(prev.sec3LiabilityOtherUnits);
+                                    const nextRows = base.rows.map((row, idx) =>
+                                      idx === i ? { ...row, [field]: e.target.value } : row
+                                    );
+                                    return {
+                                      ...prev,
+                                      sec3LiabilityOtherUnits: { ...base, rows: nextRows },
+                                    };
+                                  }, 'sec3LiabilityOtherUnits')
+                                }
+                                className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                              />
+                            </td>
+                          ))}
+                          <td className="p-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onUpdateAiSections((prev) => {
+                                  const base = currentSec3(prev.sec3LiabilityOtherUnits);
+                                  return {
+                                    ...prev,
+                                    sec3LiabilityOtherUnits: {
+                                      ...base,
+                                      rows: base.rows.filter((_, idx) => idx !== i),
+                                    },
+                                  };
+                                }, 'sec3LiabilityOtherUnits')
+                              }
+                              className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 <button
                   type="button"
-                  onClick={() => onGenerateAiSection('branchVisit')}
-                  disabled={generatingSection !== null}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded cursor-pointer disabled:opacity-60"
+                  onClick={() =>
+                    onUpdateAiSections((prev) => {
+                      const base = currentSec3(prev.sec3LiabilityOtherUnits);
+                      return {
+                        ...prev,
+                        sec3LiabilityOtherUnits: {
+                          ...base,
+                          rows: [
+                            ...base.rows,
+                            {
+                              sl: `${String.fromCharCode(97 + base.rows.length)}.`,
+                              nameOfConcern: '',
+                              bankOrNbfi: '',
+                              natureOfFacility: '',
+                              limit: '',
+                              outstanding: '',
+                              overdueEol: '',
+                              expiryDate: '',
+                              clStatus: '',
+                            },
+                          ],
+                        },
+                      };
+                    }, 'sec3LiabilityOtherUnits')
+                  }
+                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-emerald-900 bg-white border border-emerald-400 rounded cursor-pointer"
                 >
-                  {generatingSection === 'branchVisit' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5" />
-                  )}
-                  <span>{aiSections.branchVisit !== null ? 'Regenerate' : 'Generate'}</span>
+                  <Plus className="w-3 h-3" /> Add Row
                 </button>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 3 Summary / Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec3(aiSections.sec3LiabilityOtherUnits).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec3LiabilityOtherUnits: {
+                            ...currentSec3(prev.sec3LiabilityOtherUnits),
+                            summary: e.target.value,
+                          },
+                        }),
+                        'sec3LiabilityOtherUnits'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
               </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5">SL</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Name of Concern</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Banks/NBFIs</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Nature of Facility</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Limit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Outstanding with profit/Interest</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Overdue/EOL</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Expiry Date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">CL Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rawSec3Rows.map((r, i) => (
+                      <tr key={i}>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.nameOfConcern}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.bankOrNbfi}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.natureOfFacility}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.limit}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.outstanding}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.overdueEol}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.expiryDate}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.clStatus}</td>
+                      </tr>
+                    ))}
+                    {!hasSec3SubTotal && (
+                      <tr>
+                        <td colSpan={4} className="border border-dotted border-black px-1 py-0.5 font-bold text-center">
+                          Sub-Total
+                        </td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                      </tr>
+                    )}
+                    {!hasSec3GrandTotal && (
+                      <tr>
+                        <td colSpan={4} className="border border-dotted border-black px-1 py-0.5 font-bold text-center">
+                          Grand Total
+                        </td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                        <td className="border border-dotted border-black px-1 py-0.5"></td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 4: CIB Status */}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold text-[10pt] pt-0.5">
+                <span className="underline">4. CIB Status:</span> Report dated{' '}
+                <Token ph={ph} code="#62#" /> shows:
+              </p>
+              <SectionActionToolbar {...toolbarProps('sec4CibStatus')} />
             </div>
-            {editingBranchVisit ? (
+
+            {isEditing('sec4CibStatus') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2 space-y-2 text-xs">
+                <label className="block max-w-xs">
+                  <span className="text-[11px] font-medium text-slate-700">CIB Date (Branch Proposal Sec. 4)</span>
+                  <input
+                    type="text"
+                    value={currentSec4(aiSections.sec4CibStatus).cibDate}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec4CibStatus: { ...currentSec4(prev.sec4CibStatus), cibDate: e.target.value },
+                        }),
+                        'sec4CibStatus'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="text-[10px] text-slate-700">
+                        <th className="p-1 text-left">STATUS</th>
+                        <th className="p-1 text-left">Unit Borrower</th>
+                        <th className="p-1 text-left">Unit Guarantor</th>
+                        <th className="p-1 text-left">Other Borrower</th>
+                        <th className="p-1 text-left">Other Guarantor</th>
+                        <th className="p-1 text-left">Remarks</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSec4(aiSections.sec4CibStatus).rows.map((r, i) => (
+                        <tr key={i}>
+                          <td className="p-0.5 font-medium text-[11px]">{r.status}</td>
+                          {(
+                            ['unitBorrower', 'unitGuarantor', 'otherBorrower', 'otherGuarantor', 'remarks'] as const
+                          ).map((field) => (
+                            <td key={field} className="p-0.5">
+                              <input
+                                type="text"
+                                value={r[field]}
+                                onChange={(e) =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec4(prev.sec4CibStatus);
+                                    return {
+                                      ...prev,
+                                      sec4CibStatus: {
+                                        ...base,
+                                        rows: base.rows.map((row, idx) =>
+                                          idx === i ? { ...row, [field]: e.target.value } : row
+                                        ),
+                                      },
+                                    };
+                                  }, 'sec4CibStatus')
+                                }
+                                className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 4 Summary / Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec4(aiSections.sec4CibStatus).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec4CibStatus: { ...currentSec4(prev.sec4CibStatus), summary: e.target.value },
+                        }),
+                        'sec4CibStatus'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th rowSpan={2} className="border border-dotted border-black px-1 py-0.5">STATUS</th>
+                      <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        With respective unit
+                      </th>
+                      <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        With Other Bank
+                      </th>
+                      <th rowSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        Remarks (Pls. give concern wise Breakup)
+                      </th>
+                    </tr>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Borrower</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Guarantor</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Borrower</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Guarantor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sec4Rows.map((r, i) => (
+                      <tr key={i} className={/TOTAL/i.test(r.status) ? 'font-bold' : ''}>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.status}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.unitBorrower}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.unitGuarantor}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.otherBorrower}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.otherGuarantor}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.remarks}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 5: Legal Action Status */}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold text-[10pt] pt-0.5">
+                <span className="underline">5. Legal Action Status as on Memo Date:</span>{' '}
+                {bp?.section5StatusNote || ''}
+              </p>
+              <SectionActionToolbar {...toolbarProps('sec5LegalAction')} />
+            </div>
+
+            {isEditing('sec5LegalAction') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2 space-y-2 text-xs">
+                <label className="block max-w-xs">
+                  <span className="text-[11px] font-medium text-slate-700">Header Status Note (e.g. Nil, N/A)</span>
+                  <input
+                    type="text"
+                    value={currentSec5(aiSections.sec5LegalAction).statusNote}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec5LegalAction: { ...currentSec5(prev.sec5LegalAction), statusNote: e.target.value },
+                        }),
+                        'sec5LegalAction'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="text-[10px] text-slate-700">
+                        <th className="p-1 text-left">Sl</th>
+                        <th className="p-1 text-left">Type of Case</th>
+                        <th className="p-1 text-left">Case No.</th>
+                        <th className="p-1 text-left">Filing date</th>
+                        <th className="p-1 text-left">Amount</th>
+                        <th className="p-1 text-left">Prev date</th>
+                        <th className="p-1 text-left">Next date</th>
+                        <th className="p-1 text-left">Present status</th>
+                        <th className="p-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSec5(aiSections.sec5LegalAction).rows.map((r, i) => (
+                        <tr key={i}>
+                          {(
+                            [
+                              'sl',
+                              'typeOfCase',
+                              'caseNo',
+                              'filingDate',
+                              'amount',
+                              'previousDate',
+                              'nextDate',
+                              'presentStatus',
+                            ] as const
+                          ).map((field) => (
+                            <td key={field} className="p-0.5">
+                              <input
+                                type="text"
+                                value={r[field]}
+                                onChange={(e) =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec5(prev.sec5LegalAction);
+                                    return {
+                                      ...prev,
+                                      sec5LegalAction: {
+                                        ...base,
+                                        rows: base.rows.map((row, idx) =>
+                                          idx === i ? { ...row, [field]: e.target.value } : row
+                                        ),
+                                      },
+                                    };
+                                  }, 'sec5LegalAction')
+                                }
+                                className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                              />
+                            </td>
+                          ))}
+                          <td className="p-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onUpdateAiSections((prev) => {
+                                  const base = currentSec5(prev.sec5LegalAction);
+                                  return {
+                                    ...prev,
+                                    sec5LegalAction: {
+                                      ...base,
+                                      rows: base.rows.filter((_, idx) => idx !== i),
+                                    },
+                                  };
+                                }, 'sec5LegalAction')
+                              }
+                              className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateAiSections((prev) => {
+                      const base = currentSec5(prev.sec5LegalAction);
+                      return {
+                        ...prev,
+                        sec5LegalAction: {
+                          ...base,
+                          rows: [
+                            ...base.rows,
+                            {
+                              sl: String(base.rows.length + 1),
+                              typeOfCase: '',
+                              caseNo: '',
+                              filingDate: '',
+                              amount: '',
+                              previousDate: '',
+                              nextDate: '',
+                              presentStatus: '',
+                            },
+                          ],
+                        },
+                      };
+                    }, 'sec5LegalAction')
+                  }
+                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-emerald-900 bg-white border border-emerald-400 rounded cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" /> Add Case Row
+                </button>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 5 Summary / Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec5(aiSections.sec5LegalAction).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec5LegalAction: { ...currentSec5(prev.sec5LegalAction), summary: e.target.value },
+                        }),
+                        'sec5LegalAction'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5">Sl</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Type of Case</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Case No.</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Filling date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Amount</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Previous date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Next date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Present status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sec5Rows.map((r, i) => {
+                      const isEmpty = !r.sl && !r.typeOfCase && !r.caseNo;
+                      return (
+                        <tr key={i} className={isEmpty ? 'h-9' : ''}>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.typeOfCase}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.caseNo}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.filingDate}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.amount}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.previousDate}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.nextDate}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5">{r.presentStatus}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 6: Audit, Compliance and Regulatory Authority Related Status */}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold text-[10pt] pt-0.5">
+                <span className="underline">
+                  6. Audit, Compliance and Regulatory Authority Related Status:
+                </span>{' '}
+                {bp?.section6StatusNote || ''}
+              </p>
+              <SectionActionToolbar {...toolbarProps('sec6AuditCompliance')} />
+            </div>
+
+            {isEditing('sec6AuditCompliance') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2 space-y-2 text-xs">
+                <label className="block max-w-xs">
+                  <span className="text-[11px] font-medium text-slate-700">Header Status Note</span>
+                  <input
+                    type="text"
+                    value={currentSec6(aiSections.sec6AuditCompliance).statusNote}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec6AuditCompliance: {
+                            ...currentSec6(prev.sec6AuditCompliance),
+                            statusNote: e.target.value,
+                          },
+                        }),
+                        'sec6AuditCompliance'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="text-[10px] text-slate-700">
+                        <th className="p-1 text-left">SL</th>
+                        <th className="p-1 text-left">Authority</th>
+                        <th className="p-1 text-left">Last Inspection Date</th>
+                        <th className="p-1 text-left">Objection (Yes/No)</th>
+                        <th className="p-1 text-left">Objections</th>
+                        <th className="p-1 text-left">Branch Reply</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSec6(aiSections.sec6AuditCompliance).rows.map((r, i) => (
+                        <tr key={i}>
+                          <td className="p-0.5 text-[11px]">{r.sl}</td>
+                          <td className="p-0.5 text-[11px]">{r.authority}</td>
+                          {(
+                            ['lastInspectionDate', 'objectionStatus', 'objections', 'branchReply'] as const
+                          ).map((field) => (
+                            <td key={field} className="p-0.5">
+                              <input
+                                type="text"
+                                value={r[field]}
+                                onChange={(e) =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec6(prev.sec6AuditCompliance);
+                                    return {
+                                      ...prev,
+                                      sec6AuditCompliance: {
+                                        ...base,
+                                        rows: base.rows.map((row, idx) =>
+                                          idx === i ? { ...row, [field]: e.target.value } : row
+                                        ),
+                                      },
+                                    };
+                                  }, 'sec6AuditCompliance')
+                                }
+                                className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 6 Summary / Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec6(aiSections.sec6AuditCompliance).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec6AuditCompliance: {
+                            ...currentSec6(prev.sec6AuditCompliance),
+                            summary: e.target.value,
+                          },
+                        }),
+                        'sec6AuditCompliance'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5">SL</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Authority</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Last Inspection / Report Date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Objection Status (Yes/No)</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Objections (If yes)</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Branch Reply/ Current Position</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sec6Rows.map((r, i) => (
+                      <tr key={i}>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.authority}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.lastInspectionDate}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.objectionStatus}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.objections}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.branchReply}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 7: Security */}
+          <div className="space-y-1.5 text-[10pt]">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline text-[10pt] pt-0.5">7. Security:</p>
+              <SectionActionToolbar {...toolbarProps('sec7Security')} />
+            </div>
+
+            {isEditing('sec7Security') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2.5 space-y-2.5 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">a. Primary Note</span>
+                    <input
+                      type="text"
+                      value={currentSec7(aiSections.sec7Security).primaryNote}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec7Security: { ...currentSec7(prev.sec7Security), primaryNote: e.target.value },
+                          }),
+                          'sec7Security'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">Primary Security Total</span>
+                    <input
+                      type="text"
+                      value={currentSec7(aiSections.sec7Security).primaryTotal}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec7Security: { ...currentSec7(prev.sec7Security), primaryTotal: e.target.value },
+                          }),
+                          'sec7Security'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">b. Collateral Note</span>
+                    <input
+                      type="text"
+                      value={currentSec7(aiSections.sec7Security).collateralNote}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec7Security: { ...currentSec7(prev.sec7Security), collateralNote: e.target.value },
+                          }),
+                          'sec7Security'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-[11px] font-semibold text-slate-700">Primary Security Particulars</p>
+                  {currentSec7(aiSections.sec7Security).primaryRows.map((r, i) => (
+                    <div key={i} className="grid grid-cols-12 gap-1.5">
+                      <input
+                        type="text"
+                        value={r.particulars}
+                        onChange={(e) =>
+                          onUpdateAiSections((prev) => {
+                            const base = currentSec7(prev.sec7Security);
+                            return {
+                              ...prev,
+                              sec7Security: {
+                                ...base,
+                                primaryRows: base.primaryRows.map((row, idx) =>
+                                  idx === i ? { ...row, particulars: e.target.value } : row
+                                ),
+                              },
+                            };
+                          }, 'sec7Security')
+                        }
+                        className="col-span-8 px-2 py-1 border border-slate-300 rounded bg-white text-[11px]"
+                      />
+                      <input
+                        type="text"
+                        value={r.value}
+                        placeholder="Value"
+                        onChange={(e) =>
+                          onUpdateAiSections((prev) => {
+                            const base = currentSec7(prev.sec7Security);
+                            return {
+                              ...prev,
+                              sec7Security: {
+                                ...base,
+                                primaryRows: base.primaryRows.map((row, idx) =>
+                                  idx === i ? { ...row, value: e.target.value } : row
+                                ),
+                              },
+                            };
+                          }, 'sec7Security')
+                        }
+                        className="col-span-4 px-2 py-1 border border-slate-300 rounded bg-white text-[11px]"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Collateral Schedules (one per line)</span>
+                  <textarea
+                    rows={3}
+                    value={currentSec7(aiSections.sec7Security).collateralSchedules.join('\n')}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec7Security: {
+                            ...currentSec7(prev.sec7Security),
+                            collateralSchedules: e.target.value.split('\n'),
+                          },
+                        }),
+                        'sec7Security'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+
+                <div className="overflow-x-auto">
+                  <p className="text-[11px] font-semibold text-slate-700 mb-1">Collateral Valuation Table</p>
+                  <table className="w-full border-collapse text-[10px]">
+                    <thead>
+                      <tr>
+                        <th className="p-0.5 text-left">Schedule</th>
+                        <th className="p-0.5">Orig Br MV</th>
+                        <th className="p-0.5">Orig Br FSV</th>
+                        <th className="p-0.5">Orig Surv MV</th>
+                        <th className="p-0.5">Orig Surv FSV</th>
+                        <th className="p-0.5">Pres Br MV</th>
+                        <th className="p-0.5">Pres Br FSV</th>
+                        <th className="p-0.5">Pres Surv MV</th>
+                        <th className="p-0.5">Pres Surv FSV</th>
+                        <th className="p-0.5">AV MV</th>
+                        <th className="p-0.5">AV FSV</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSec7(aiSections.sec7Security).valuationRows.map((r, i) => (
+                        <tr key={i}>
+                          {(
+                            [
+                              'schedule',
+                              'origBranchMv',
+                              'origBranchFsv',
+                              'origSurvMv',
+                              'origSurvFsv',
+                              'presBranchMv',
+                              'presBranchFsv',
+                              'presSurvMv',
+                              'presSurvFsv',
+                              'presAvMv',
+                              'presAvFsv',
+                            ] as const
+                          ).map((field) => (
+                            <td key={field} className="p-0.5">
+                              <input
+                                type="text"
+                                value={r[field]}
+                                onChange={(e) =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec7(prev.sec7Security);
+                                    return {
+                                      ...prev,
+                                      sec7Security: {
+                                        ...base,
+                                        valuationRows: base.valuationRows.map((row, idx) =>
+                                          idx === i ? { ...row, [field]: e.target.value } : row
+                                        ),
+                                      },
+                                    };
+                                  }, 'sec7Security')
+                                }
+                                className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[10px]"
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">Coverage (%)</span>
+                    <input
+                      type="text"
+                      value={currentSec7(aiSections.sec7Security).coveragePct}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec7Security: { ...currentSec7(prev.sec7Security), coveragePct: e.target.value },
+                          }),
+                          'sec7Security'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-medium text-slate-700">c. Others (Additional Note)</span>
+                    <input
+                      type="text"
+                      value={currentSec7(aiSections.sec7Security).othersNote}
+                      onChange={(e) =>
+                        onUpdateAiSections(
+                          (prev) => ({
+                            ...prev,
+                            sec7Security: { ...currentSec7(prev.sec7Security), othersNote: e.target.value },
+                          }),
+                          'sec7Security'
+                        )
+                      }
+                      className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                    />
+                  </label>
+                </div>
+
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 7 Summary / Assessment</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec7(aiSections.sec7Security).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec7Security: { ...currentSec7(prev.sec7Security), summary: e.target.value },
+                        }),
+                        'sec7Security'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <p className="font-bold pl-2">
+                  <span className="underline">a. Primary:</span> {bp?.section7PrimaryNote || ''}
+                </p>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-2 py-0.5 text-left w-[75%]">Particulars</th>
+                      <th className="border border-dotted border-black px-2 py-0.5 text-center w-[25%]">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sec7Primary.map((r, i) => (
+                      <tr key={i}>
+                        <td className="border border-dotted border-black px-2 py-0.5">{r.particulars}</td>
+                        <td className="border border-dotted border-black px-2 py-0.5 text-center">{r.value}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold">
+                      <td className="border border-dotted border-black px-2 py-0.5 text-center">
+                        Total value of primary security
+                      </td>
+                      <td className="border border-dotted border-black px-2 py-0.5 text-center">
+                        {bp?.section7PrimaryTotal || ''}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p className="font-bold pl-2 pt-1">
+                  <span className="underline">b. Collateral:</span> {bp?.section7CollateralNote || ''}
+                </p>
+                <div className="pl-2 space-y-0.5 text-[10pt]">
+                  {sec7Schedules.map((s, i) => (
+                    <p key={i}>{s}</p>
+                  ))}
+                </div>
+
+                <table className="w-full text-[9pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th rowSpan={4} className="border border-dotted border-black px-1 py-1 align-middle">
+                        Schedule
+                      </th>
+                      <th colSpan={10} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        Value of the mortgaged properties as assessed
+                      </th>
+                    </tr>
+                    <tr>
+                      <th colSpan={4} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        At the time of allowing investment
+                      </th>
+                      <th colSpan={6} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        At present
+                      </th>
+                    </tr>
+                    <tr>
+                      <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        By Branch<br />on………..
+                      </th>
+                      <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        Surveyor<br />on……………..
+                      </th>
+                      <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        By Branch<br />on…………….
+                      </th>
+                      <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        Surveyor<br />on………….
+                      </th>
+                      <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
+                        By AV Cell<br />on……………
+                      </th>
+                    </tr>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">MV</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">FSV</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sec7ValRows.map((r, i) => (
+                      <tr key={i} className={/Grand/i.test(r.schedule) ? 'font-bold' : ''}>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.schedule}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.origBranchMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.origBranchFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.origSurvMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.origSurvFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.presBranchMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.presBranchFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.presSurvMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.presSurvFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.presAvMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.presAvFsv}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={11} className="border border-dotted border-black px-2 py-0.5 text-center font-bold">
+                        Outstanding to Lowest Security value Coverage (%): {bp?.section7CoveragePct || '……………..%'}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="pl-2 font-bold text-[10pt]">
+                  <p>c. Others:</p>
+                  <p className="pl-5">a. Usual Charge documents.</p>
+                  <p className="pl-5">b. Acceptance of Branch Sanction by the Client.</p>
+                  {memo.sec7OthersNote && (
+                    <p className="pl-5 font-normal whitespace-pre-line">{memo.sec7OthersNote}</p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 8: Source of Repayment */}
+          <div className="space-y-1 text-[10pt]">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline pt-0.5">8. Source of Repayment:</p>
+              <SectionActionToolbar {...toolbarProps('sec8SourceOfRepayment')} />
+            </div>
+            {isEditing('sec8SourceOfRepayment') ? (
+              <textarea
+                rows={3}
+                value={sourceOfRepaymentManual || aiSections.sec8SourceOfRepayment || ''}
+                onChange={(e) => onManualSourceOfRepaymentChange(e.target.value)}
+                placeholder="Enter source of repayment or click Scrutinize and Fill Up Through AI..."
+                className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
+              />
+            ) : memo.sourceOfRepayment ? (
+              <p className="whitespace-pre-line">{memo.sourceOfRepayment}</p>
+            ) : (
+              <p className="text-slate-400 italic">[Enter in Manual Inputs or click Scrutinize and Fill Up Through AI]</p>
+            )}
+          </div>
+
+          {/* SECTION 9: Sequence of Head Office Sanction(S) */}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline text-[10pt] pt-0.5">9. Sequence of Head Office Sanction(S):</p>
+              <SectionActionToolbar {...toolbarProps('sec9HoSanctions')} />
+            </div>
+
+            {isEditing('sec9HoSanctions') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2 space-y-2 text-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="text-[10px] text-slate-700">
+                        <th className="p-1 text-left">SL</th>
+                        <th className="p-1 text-left">HO Sanction Reference No.</th>
+                        <th className="p-1 text-left">Date</th>
+                        <th className="p-1 text-left">Limit</th>
+                        <th className="p-1 text-left">Remarks</th>
+                        <th className="p-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSec9(aiSections.sec9HoSanctions).rows.map((r, i) => (
+                        <tr key={i}>
+                          {(['sl', 'referenceNo', 'date', 'limit', 'remarks'] as const).map((field) => (
+                            <td key={field} className="p-0.5">
+                              <input
+                                type="text"
+                                value={r[field]}
+                                onChange={(e) =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec9(prev.sec9HoSanctions);
+                                    return {
+                                      ...prev,
+                                      sec9HoSanctions: {
+                                        ...base,
+                                        rows: base.rows.map((row, idx) =>
+                                          idx === i ? { ...row, [field]: e.target.value } : row
+                                        ),
+                                      },
+                                    };
+                                  }, 'sec9HoSanctions')
+                                }
+                                className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                              />
+                            </td>
+                          ))}
+                          <td className="p-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onUpdateAiSections((prev) => {
+                                  const base = currentSec9(prev.sec9HoSanctions);
+                                  return {
+                                    ...prev,
+                                    sec9HoSanctions: {
+                                      ...base,
+                                      rows: base.rows.filter((_, idx) => idx !== i),
+                                    },
+                                  };
+                                }, 'sec9HoSanctions')
+                              }
+                              className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateAiSections((prev) => {
+                      const base = currentSec9(prev.sec9HoSanctions);
+                      return {
+                        ...prev,
+                        sec9HoSanctions: {
+                          ...base,
+                          rows: [
+                            ...base.rows,
+                            {
+                              sl: `${String.fromCharCode(97 + base.rows.length)}.`,
+                              referenceNo: '',
+                              date: '',
+                              limit: '',
+                              remarks: '',
+                            },
+                          ],
+                        },
+                      };
+                    }, 'sec9HoSanctions')
+                  }
+                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-emerald-900 bg-white border border-emerald-400 rounded cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" /> Add Sanction Row
+                </button>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 9 Summary / Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec9(aiSections.sec9HoSanctions).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec9HoSanctions: { ...currentSec9(prev.sec9HoSanctions), summary: e.target.value },
+                        }),
+                        'sec9HoSanctions'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[7%]">SL</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[36%]">HO Sanction Reference No.</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[16%]">Date</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[15%]">Limit</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[26%]">Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sec9Rows.map((r, i) => (
+                      <tr key={i}>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.sl}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.referenceNo}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.date}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.limit}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.remarks}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 10: Brief Particulars of The Client */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline text-[10pt] pt-0.5">10. Brief Particulars of The Client:</p>
+              <SectionActionToolbar {...toolbarProps('sec10ClientParticulars')} />
+            </div>
+
+            {isEditing('sec10ClientParticulars') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2.5 space-y-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {(
+                    [
+                      ['nameOfClient', 'a. Name of the Client'],
+                      ['uniqueCustomerId', 'b. Unique Customer ID'],
+                      ['awcdMsdAccount', 'c. AWCD/MSD Account with opening date'],
+                      ['businessTypeNature', 'd. Business Type/Nature'],
+                      ['businessManagementType', 'e. Business Management Type'],
+                      ['clientType', 'f. Client Type'],
+                      ['keyPersonPhone', 'g. Key Person with Phone No.'],
+                      ['address', 'g. Address'],
+                      ['officeBusinessAddress', 'h. Office/Business Address'],
+                      ['factoryAddress', 'h. Factory Address'],
+                      ['purposeOfInvestment', 'i. Purpose of Investment'],
+                      ['limitOfInvestment', 'j. Limit of Investment'],
+                      ['modeOfInvestment', 'k. Mode of Investment'],
+                      ['lastVisitDate', 'l. Last Visit Date'],
+                      ['stockPosition', 'm. Stock Position'],
+                      ['fixedAsset', 'n. Fixed Asset'],
+                      ['businessNetWorth', 'o. Business Net Worth'],
+                      ['insuranceCoverage', 'p. Insurance Coverage'],
+                      ['tradeLicenseValidity', 'q. Trade License & Validity'],
+                      ['otherRegulatoryDocuments', 'r. Other Regulatory Documents'],
+                      ['dateOfOriginalInvestment', 's. Date of Original Investment'],
+                      ['firstDisbursementManager', 't. 1st Disbursement Manager'],
+                      ['firstDateOfClassification', 'u. First Date of Classification with Status'],
+                    ] as Array<[keyof Section10Particulars, string]>
+                  ).map(([field, label]) => (
+                    <label key={field} className="block">
+                      <span className="text-[11px] font-medium text-slate-700">{label}</span>
+                      <input
+                        type="text"
+                        value={currentSec10(aiSections.sec10ClientParticulars).particulars[field]}
+                        onChange={(e) =>
+                          onUpdateAiSections((prev) => {
+                            const base = currentSec10(prev.sec10ClientParticulars);
+                            return {
+                              ...prev,
+                              sec10ClientParticulars: {
+                                ...base,
+                                particulars: {
+                                  ...base.particulars,
+                                  [field]: e.target.value,
+                                },
+                              },
+                            };
+                          }, 'sec10ClientParticulars')
+                        }
+                        className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white text-[11px]"
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div>
+                  <p className="text-[11px] font-semibold text-slate-700 mb-1">
+                    Proprietor / Partner / Directors
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="text-[10px] text-slate-700">
+                          <th className="p-1 text-left">Name</th>
+                          <th className="p-1 text-left">Age</th>
+                          <th className="p-1 text-left">Education</th>
+                          <th className="p-1 text-left">Designation</th>
+                          <th className="p-1 text-left">Share (%)</th>
+                          <th className="p-1 text-left">Experience</th>
+                          <th className="p-1 text-left">Net worth</th>
+                          <th className="p-1"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentSec10(aiSections.sec10ClientParticulars).directors.map((d, i) => (
+                          <tr key={i}>
+                            {(
+                              ['name', 'age', 'education', 'designation', 'sharePct', 'experience', 'netWorth'] as const
+                            ).map((field) => (
+                              <td key={field} className="p-0.5">
+                                <input
+                                  type="text"
+                                  value={d[field]}
+                                  onChange={(e) =>
+                                    onUpdateAiSections((prev) => {
+                                      const base = currentSec10(prev.sec10ClientParticulars);
+                                      return {
+                                        ...prev,
+                                        sec10ClientParticulars: {
+                                          ...base,
+                                          directors: base.directors.map((row, idx) =>
+                                            idx === i ? { ...row, [field]: e.target.value } : row
+                                          ),
+                                        },
+                                      };
+                                    }, 'sec10ClientParticulars')
+                                  }
+                                  className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                                />
+                              </td>
+                            ))}
+                            <td className="p-0.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec10(prev.sec10ClientParticulars);
+                                    return {
+                                      ...prev,
+                                      sec10ClientParticulars: {
+                                        ...base,
+                                        directors: base.directors.filter((_, idx) => idx !== i),
+                                      },
+                                    };
+                                  }, 'sec10ClientParticulars')
+                                }
+                                className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateAiSections((prev) => {
+                        const base = currentSec10(prev.sec10ClientParticulars);
+                        return {
+                          ...prev,
+                          sec10ClientParticulars: {
+                            ...base,
+                            directors: [
+                              ...base.directors,
+                              {
+                                name: '',
+                                age: '',
+                                education: '',
+                                designation: '',
+                                sharePct: '',
+                                experience: '',
+                                netWorth: '',
+                              },
+                            ],
+                          },
+                        };
+                      }, 'sec10ClientParticulars')
+                    }
+                    className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-emerald-900 bg-white border border-emerald-400 rounded cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" /> Add Director
+                  </button>
+                </div>
+
+                <div>
+                  <p className="text-[11px] font-semibold text-slate-700 mb-1">
+                    Director of any Bank / FI / Insurance Company
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="text-[10px] text-slate-700">
+                          <th className="p-1 text-left">Name</th>
+                          <th className="p-1 text-left">Bank/NBFIs</th>
+                          <th className="p-1 text-left">Designation</th>
+                          <th className="p-1 text-left">Share (%)</th>
+                          <th className="p-1 text-left">No. of Shares</th>
+                          <th className="p-1"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentSec10(aiSections.sec10ClientParticulars).bankDirectors.map((d, i) => (
+                          <tr key={i}>
+                            {(['name', 'bankNbfi', 'designation', 'sharePct', 'numShares'] as const).map((field) => (
+                              <td key={field} className="p-0.5">
+                                <input
+                                  type="text"
+                                  value={d[field]}
+                                  onChange={(e) =>
+                                    onUpdateAiSections((prev) => {
+                                      const base = currentSec10(prev.sec10ClientParticulars);
+                                      return {
+                                        ...prev,
+                                        sec10ClientParticulars: {
+                                          ...base,
+                                          bankDirectors: base.bankDirectors.map((row, idx) =>
+                                            idx === i ? { ...row, [field]: e.target.value } : row
+                                          ),
+                                        },
+                                      };
+                                    }, 'sec10ClientParticulars')
+                                  }
+                                  className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                                />
+                              </td>
+                            ))}
+                            <td className="p-0.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec10(prev.sec10ClientParticulars);
+                                    return {
+                                      ...prev,
+                                      sec10ClientParticulars: {
+                                        ...base,
+                                        bankDirectors: base.bankDirectors.filter((_, idx) => idx !== i),
+                                      },
+                                    };
+                                  }, 'sec10ClientParticulars')
+                                }
+                                className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateAiSections((prev) => {
+                        const base = currentSec10(prev.sec10ClientParticulars);
+                        return {
+                          ...prev,
+                          sec10ClientParticulars: {
+                            ...base,
+                            bankDirectors: [
+                              ...base.bankDirectors,
+                              { name: '', bankNbfi: '', designation: '', sharePct: '', numShares: '' },
+                            ],
+                          },
+                        };
+                      }, 'sec10ClientParticulars')
+                    }
+                    className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-emerald-900 bg-white border border-emerald-400 rounded cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" /> Add Bank Director
+                  </button>
+                </div>
+
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 10 Summary / Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec10(aiSections.sec10ClientParticulars).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec10ClientParticulars: {
+                            ...currentSec10(prev.sec10ClientParticulars),
+                            summary: e.target.value,
+                          },
+                        }),
+                        'sec10ClientParticulars'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <tbody>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 w-[6%]">a.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 w-[37%]">Name of the Client</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center w-[4%]">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 w-[53%]">{sp?.nameOfClient || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">b.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Unique Customer ID</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.uniqueCustomerId || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">c.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">AWCD/MSD Account with opening date</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.awcdMsdAccount || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">d.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Business Type/Nature</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.businessTypeNature || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">e.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Business Management Type</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.businessManagementType || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">f.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Client Type</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.clientType || ''}</td>
+                    </tr>
+                    <tr>
+                      <td rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 align-middle">g.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Key Person with Phone No.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.keyPersonPhone || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Address</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.address || ''}</td>
+                    </tr>
+                    <tr>
+                      <td rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 align-middle">h.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Office/Business Address</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.officeBusinessAddress || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Factory Address</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.factoryAddress || ''}</td>
+                    </tr>
+                    {[
+                      ['i.', 'Purpose of Investment', sp?.purposeOfInvestment || ''],
+                      ['j.', 'Limit of Investment', sp?.limitOfInvestment || ''],
+                      ['k.', 'Mode of Investment', sp?.modeOfInvestment || ''],
+                      ['l.', 'Last Visit Date', sp?.lastVisitDate || ''],
+                      ['m.', 'Stock Position', sp?.stockPosition || ''],
+                      ['n.', 'Fixed Asset', sp?.fixedAsset || ''],
+                      ['o.', 'Business Net Worth', sp?.businessNetWorth || ''],
+                      ['p.', 'Insurance Coverage', sp?.insuranceCoverage || ''],
+                      ['q.', 'Trade License & Validity', sp?.tradeLicenseValidity || ''],
+                      ['r', 'Other Regulatory Documents', sp?.otherRegulatoryDocuments || ''],
+                      ['s', 'Date of Original Investment', sp?.dateOfOriginalInvestment || ''],
+                    ].map(([idx, label, val], i) => (
+                      <tr key={i}>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{idx}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{label}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5">{val}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">t.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">
+                        1<sup>st</sup> Disbursement Manager
+                      </td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.firstDisbursementManager || ''}</td>
+                    </tr>
+                    <tr>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">u.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">First Date of Classification with Status</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.firstDateOfClassification || ''}</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p className="font-bold underline text-[10pt]">
+                  • Particular of the Proprietor/Partner/Directors:
+                </p>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Directors</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Age</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Education</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Designation</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Share (%)</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Experience</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Net worth</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dirRows.map((d, i) => (
+                      <tr key={i} className={!d.name && !d.age ? 'h-6' : ''}>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.name}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.age}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.education}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.designation}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.sharePct}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.experience}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.netWorth}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <p className="font-bold underline text-[10pt]">
+                  • Remarks: Director of any Bank/ FI/ Insurance company:
+                </p>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Director</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Name of the bank/NBFIs</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Designation/Position</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Percentage of Shares</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Number of Shares</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bankDirRows.map((d, i) => (
+                      <tr key={i} className={!d.name && !d.bankNbfi ? 'h-6' : ''}>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.name}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.bankNbfi}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.designation}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.sharePct}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{d.numShares}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 11: Financials of The Client */}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline text-[10pt] pt-0.5">11. Financials of The Client:</p>
+              <SectionActionToolbar {...toolbarProps('sec11Financials')} />
+            </div>
+
+            {isEditing('sec11Financials') ? (
+              <div className="font-sans border border-emerald-600 rounded bg-emerald-50/20 p-2 space-y-2 text-xs">
+                <label className="block max-w-xs">
+                  <span className="text-[11px] font-medium text-slate-700">Financials Note (e.g. Nil, N/A)</span>
+                  <input
+                    type="text"
+                    value={currentSec11(aiSections.sec11Financials).financialsNote}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec11Financials: {
+                            ...currentSec11(prev.sec11Financials),
+                            financialsNote: e.target.value,
+                          },
+                        }),
+                        'sec11Financials'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="text-[10px] text-slate-700">
+                        <th className="p-1 text-left">Year</th>
+                        <th className="p-1 text-left">Gross Sales</th>
+                        <th className="p-1 text-left">Gross Profit</th>
+                        <th className="p-1 text-left">Net Profit</th>
+                        <th className="p-1 text-left">Total Asset</th>
+                        <th className="p-1 text-left">Total liabilities</th>
+                        <th className="p-1 text-left">Net Worth</th>
+                        <th className="p-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSec11(aiSections.sec11Financials).rows.map((r, i) => (
+                        <tr key={i}>
+                          {(
+                            [
+                              'year',
+                              'grossSales',
+                              'grossProfit',
+                              'netProfit',
+                              'totalAsset',
+                              'totalLiabilities',
+                              'netWorth',
+                            ] as const
+                          ).map((field) => (
+                            <td key={field} className="p-0.5">
+                              <input
+                                type="text"
+                                value={r[field]}
+                                onChange={(e) =>
+                                  onUpdateAiSections((prev) => {
+                                    const base = currentSec11(prev.sec11Financials);
+                                    return {
+                                      ...prev,
+                                      sec11Financials: {
+                                        ...base,
+                                        rows: base.rows.map((row, idx) =>
+                                          idx === i ? { ...row, [field]: e.target.value } : row
+                                        ),
+                                      },
+                                    };
+                                  }, 'sec11Financials')
+                                }
+                                className="w-full px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+                              />
+                            </td>
+                          ))}
+                          <td className="p-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onUpdateAiSections((prev) => {
+                                  const base = currentSec11(prev.sec11Financials);
+                                  return {
+                                    ...prev,
+                                    sec11Financials: {
+                                      ...base,
+                                      rows: base.rows.filter((_, idx) => idx !== i),
+                                    },
+                                  };
+                                }, 'sec11Financials')
+                              }
+                              className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateAiSections((prev) => {
+                      const base = currentSec11(prev.sec11Financials);
+                      return {
+                        ...prev,
+                        sec11Financials: {
+                          ...base,
+                          rows: [
+                            ...base.rows,
+                            {
+                              year: '',
+                              grossSales: '',
+                              grossProfit: '',
+                              netProfit: '',
+                              totalAsset: '',
+                              totalLiabilities: '',
+                              netWorth: '',
+                            },
+                          ],
+                        },
+                      };
+                    }, 'sec11Financials')
+                  }
+                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-emerald-900 bg-white border border-emerald-400 rounded cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" /> Add Financial Row
+                </button>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-slate-700">Section 11 Summary / Note</span>
+                  <textarea
+                    rows={2}
+                    value={currentSec11(aiSections.sec11Financials).summary}
+                    onChange={(e) =>
+                      onUpdateAiSections(
+                        (prev) => ({
+                          ...prev,
+                          sec11Financials: { ...currentSec11(prev.sec11Financials), summary: e.target.value },
+                        }),
+                        'sec11Financials'
+                      )
+                    }
+                    className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded bg-white"
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-[10pt] border border-dotted border-black">
+                  <thead>
+                    <tr>
+                      <th className="border border-dotted border-black px-1 py-0.5">Year</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Gross Sales</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Gross Profit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Net Profit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Total Asset</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Total liabilities</th>
+                      <th className="border border-dotted border-black px-1 py-0.5">Net Worth</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {finRows.map((r, i) => (
+                      <tr key={i} className={!r.year && !r.grossSales ? 'h-6' : ''}>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.year}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.grossSales}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.grossProfit}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.netProfit}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.totalAsset}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.totalLiabilities}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5">{r.netWorth}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {/* SECTION 12: Branch Visit Report */}
+          <div className="space-y-1 text-[10pt]">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline pt-0.5">12. Branch Visit Report:</p>
+              <SectionActionToolbar {...toolbarProps('branchVisit')} />
+            </div>
+            {isEditing('branchVisit') ? (
               <textarea
                 rows={5}
-                value={aiSections.branchVisit ?? ''}
-                onChange={(e) => onUpdateAiSection('branchVisit', e.target.value)}
+                value={aiSections.branchVisit ?? memo.branchVisitReport}
+                onChange={(e) => updateNarrativeAi('branchVisit', e.target.value)}
+                placeholder="Enter third-person Branch Visit Report or click Scrutinize and Fill Up Through AI..."
                 className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
               />
             ) : memo.branchVisitReport ? (
@@ -1318,55 +3284,67 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             ) : null}
           </div>
 
-          {/* Section 13 */}
-          <p className="text-[10pt]">
-            <span className="font-bold underline">13. Recommendation of The Branch:</span> The Branch
-            Recommended the following vide Proposal Ref: <Token ph={ph} code="#64#" /> dated{' '}
-            <Token ph={ph} code="#65#" />
-          </p>
-
-          {/* Section 14 */}
-          <p className="text-[10pt] font-bold">
-            <span className="underline">
-              14. Recommendation of Internal Control &amp; Compliance Division:
-            </span>{' '}
-            N/A
-          </p>
-
-          {/* Section 15 (AI Generate: 5 observation/recommendation points) */}
+          {/* SECTION 13: Recommendation of The Branch */}
           <div className="space-y-1 text-[10pt]">
-            <div className="flex items-center justify-between gap-3">
-              <p className="font-bold underline">15. Observation and Recommendation of SAMD:</p>
-              <div className="flex items-center gap-2 font-sans">
-                {aiSections.samdObservation !== null && (
-                  <button
-                    type="button"
-                    onClick={() => setEditingSamd((v) => !v)}
-                    className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded border border-slate-300 cursor-pointer"
-                  >
-                    {editingSamd ? 'Done Editing' : 'Edit Text'}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onGenerateAiSection('samdObservation')}
-                  disabled={generatingSection !== null}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded cursor-pointer disabled:opacity-60"
-                >
-                  {generatingSection === 'samdObservation' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5" />
-                  )}
-                  <span>{aiSections.samdObservation !== null ? 'Regenerate' : 'Generate'}</span>
-                </button>
-              </div>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="pt-0.5">
+                <span className="font-bold underline">13. Recommendation of The Branch:</span> The Branch
+                Recommended the following vide Proposal Ref: <Token ph={ph} code="#64#" /> dated{' '}
+                <Token ph={ph} code="#65#" />
+              </p>
+              <SectionActionToolbar {...toolbarProps('sec13BranchRecommendation')} />
             </div>
-            {editingSamd ? (
+            {isEditing('sec13BranchRecommendation') ? (
+              <textarea
+                rows={4}
+                value={aiSections.sec13BranchRecommendation ?? memo.sec13BranchRecommendation}
+                onChange={(e) => updateNarrativeAi('sec13BranchRecommendation', e.target.value)}
+                placeholder="Enter Branch Recommendation summary or click Scrutinize and Fill Up Through AI..."
+                className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
+              />
+            ) : memo.sec13BranchRecommendation ? (
+              <p className="pl-4 whitespace-pre-line">{memo.sec13BranchRecommendation}</p>
+            ) : null}
+          </div>
+
+          {/* SECTION 14: Recommendation of Internal Control & Compliance Division */}
+          <div className="space-y-1 text-[10pt]">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="pt-0.5">
+                <span className="font-bold underline">
+                  14. Recommendation of Internal Control &amp; Compliance Division:
+                </span>{' '}
+                {memo.sec14IccdRecommendation ? (
+                  <span className="whitespace-pre-line">{memo.sec14IccdRecommendation}</span>
+                ) : (
+                  <span className="font-bold">N/A</span>
+                )}
+              </p>
+              <SectionActionToolbar {...toolbarProps('sec14IccdRecommendation')} />
+            </div>
+            {isEditing('sec14IccdRecommendation') && (
+              <textarea
+                rows={3}
+                value={aiSections.sec14IccdRecommendation ?? memo.sec14IccdRecommendation}
+                onChange={(e) => updateNarrativeAi('sec14IccdRecommendation', e.target.value)}
+                placeholder="Enter ICCD Recommendation or leave N/A..."
+                className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
+              />
+            )}
+          </div>
+
+          {/* SECTION 15: Observation and Recommendation of SAMD */}
+          <div className="space-y-1 text-[10pt]">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline pt-0.5">15. Observation and Recommendation of SAMD:</p>
+              <SectionActionToolbar {...toolbarProps('samdObservation')} />
+            </div>
+            {isEditing('samdObservation') ? (
               <textarea
                 rows={7}
-                value={aiSections.samdObservation ?? ''}
-                onChange={(e) => onUpdateAiSection('samdObservation', e.target.value)}
+                value={aiSections.samdObservation ?? memo.samdObservation}
+                onChange={(e) => updateNarrativeAi('samdObservation', e.target.value)}
+                placeholder="Enter SAMD Observation and Recommendation points or click Scrutinize and Fill Up Through AI..."
                 className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
               />
             ) : memo.samdObservation ? (

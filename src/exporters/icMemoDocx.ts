@@ -859,7 +859,7 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
             simpleCell('', { widthTwips: sec2Cols[4], marginTB: 20 }),
             simpleCell('', { widthTwips: sec2Cols[5], marginTB: 20 }),
             simpleCell('', { widthTwips: sec2Cols[6], marginTB: 20 }),
-            simpleCell('', { widthTwips: sec2Cols[7], marginTB: 20 }),
+            simpleCell(memo.sec2NonFundedNote || '', { widthTwips: sec2Cols[7], marginTB: 20 }),
           ],
         }),
         new TableRow({
@@ -1413,7 +1413,13 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
     }),
     p([txt('c. Others:', { bold: true })], { indentLeft: 120, before: 35, after: 10 }),
     p([txt('a. Usual Charge documents.', { bold: true })], { indentLeft: 320, before: 10, after: 10 }),
-    p([txt('b. Acceptance of Branch Sanction by the Client.', { bold: true })], { indentLeft: 320, before: 10, after: 15 })
+    p([txt('b. Acceptance of Branch Sanction by the Client.', { bold: true })], { indentLeft: 320, before: 10, after: 15 }),
+    ...(memo.sec7OthersNote
+      ? memo.sec7OthersNote
+          .split('\n')
+          .filter((l) => l.trim())
+          .map((line) => p([txt(line.trim(), { size: SZ_BODY })], { indentLeft: 320, before: 10, after: 10 }))
+      : [])
   );
 
   // Section 8 (Source of Repayment)
@@ -1809,16 +1815,23 @@ export async function generateICMemoDocxBlob(memo: ResolvedICMemo): Promise<Blob
         txt('13. Recommendation of The Branch: ', { bold: true, underline: true }),
         txt(`The Branch Recommended the following vide Proposal Ref: ${v('#64#')} dated ${v('#65#')}`),
       ],
-      { before: 35, after: 25 }
+      { before: 35, after: 20 }
     )
   );
+  if (memo.sec13BranchRecommendation) {
+    for (const line of memo.sec13BranchRecommendation.split('\n').filter((l) => l.trim())) {
+      body.push(p([txt(line.trim())], { indentLeft: 180, before: 12, after: 15 }));
+    }
+  }
 
   // Section 14
   body.push(
     p(
       [
         txt('14. Recommendation of Internal Control & Compliance Division: ', { bold: true, underline: true }),
-        txt('N/A', { bold: true }),
+        memo.sec14IccdRecommendation
+          ? txt(memo.sec14IccdRecommendation)
+          : txt('N/A', { bold: true }),
       ],
       { before: 35, after: 25 }
     )

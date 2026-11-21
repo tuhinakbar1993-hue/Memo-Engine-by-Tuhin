@@ -234,9 +234,124 @@ export interface ManualInputsData {
   sourceOfRepayment: string; // Section 8
 }
 
+export type ScrutinySectionKey =
+  | 'justification'
+  | 'sec1NatureOfBusiness'
+  | 'sec2LiabilityOurBank'
+  | 'sec3LiabilityOtherUnits'
+  | 'sec4CibStatus'
+  | 'sec5LegalAction'
+  | 'sec6AuditCompliance'
+  | 'sec7Security'
+  | 'sec8SourceOfRepayment'
+  | 'sec9HoSanctions'
+  | 'sec10ClientParticulars'
+  | 'sec11Financials'
+  | 'branchVisit'
+  | 'sec13BranchRecommendation'
+  | 'sec14IccdRecommendation'
+  | 'samdObservation';
+
+export interface BranchProposalSource {
+  sourceId?: string;
+  fileName: string;
+  rawText: string;
+  pageImages: Array<{ mimeType: string; data: string }>;
+}
+
+export interface InsufficientSectionInfo {
+  section: ScrutinySectionKey;
+  reason: string;
+}
+
+export interface BatchScrutinyState {
+  running: boolean;
+  total: number;
+  targetSections: ScrutinySectionKey[];
+  completedSections: ScrutinySectionKey[];
+  retryingSections: ScrutinySectionKey[];
+  failedSections: Array<{ section: ScrutinySectionKey; error: string }>;
+  insufficientSections: InsufficientSectionInfo[];
+  skippedManualSections: ScrutinySectionKey[];
+}
+
+export interface Section2AiData {
+  limit: string;
+  validity: string;
+  remarks: string;
+  nonFundedNote: string;
+  summary: string;
+}
+
+export interface Section3AiData {
+  rows: Section3Row[];
+  summary: string;
+}
+
+export interface Section4AiData {
+  cibDate: string;
+  rows: Section4Row[];
+  summary: string;
+}
+
+export interface Section5AiData {
+  statusNote: string;
+  rows: Section5Row[];
+  summary: string;
+}
+
+export interface Section6AiData {
+  statusNote: string;
+  rows: Section6Row[];
+  summary: string;
+}
+
+export interface Section7AiData {
+  primaryNote: string;
+  primaryRows: Section7PrimaryRow[];
+  primaryTotal: string;
+  collateralNote: string;
+  collateralSchedules: string[];
+  valuationRows: Section7ValuationRow[];
+  coveragePct: string;
+  othersNote: string;
+  summary: string;
+}
+
+export interface Section9AiData {
+  rows: Section9Row[];
+  summary: string;
+}
+
+export interface Section10AiData {
+  particulars: Section10Particulars;
+  directors: Section10DirectorRow[];
+  bankDirectors: Section10BankDirectorRow[];
+  summary: string;
+}
+
+export interface Section11AiData {
+  financialsNote: string;
+  rows: Section11Row[];
+  summary: string;
+}
+
 export interface AiSectionsData {
   justification: string | null; // #51#
+  sec1NatureOfBusiness: string | null; // Section 1 (#54#)
+  sec2LiabilityOurBank: Section2AiData | null; // Section 2
+  sec3LiabilityOtherUnits: Section3AiData | null; // Section 3
+  sec4CibStatus: Section4AiData | null; // Section 4
+  sec5LegalAction: Section5AiData | null; // Section 5
+  sec6AuditCompliance: Section6AiData | null; // Section 6
+  sec7Security: Section7AiData | null; // Section 7
+  sec8SourceOfRepayment: string | null; // Section 8
+  sec9HoSanctions: Section9AiData | null; // Section 9
+  sec10ClientParticulars: Section10AiData | null; // Section 10
+  sec11Financials: Section11AiData | null; // Section 11
   branchVisit: string | null; // Section 12
+  sec13BranchRecommendation: string | null; // Section 13
+  sec14IccdRecommendation: string | null; // Section 14
   samdObservation: string | null; // Section 15
 }
 
@@ -264,6 +379,11 @@ export interface ResolvedICMemo {
   justificationLines: string; // #51#
   branchVisitReport: string;
   samdObservation: string;
+  sec13BranchRecommendation: string;
+  sec14IccdRecommendation: string;
+  sectionSummaries: Partial<Record<ScrutinySectionKey, string>>;
+  sec2NonFundedNote: string;
+  sec7OthersNote: string;
   branchProposal: BranchProposalData | null;
 }
 

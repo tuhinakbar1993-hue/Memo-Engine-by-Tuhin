@@ -1,9 +1,12 @@
+import { createEmptyBranchProposal } from '../parsers/branchProposalParser';
 import type {
   AiSectionsData,
+  BranchProposalData,
   ExtractedDocumentsState,
   ManualInputsData,
   MissingFieldItem,
   ResolvedICMemo,
+  ScrutinySectionKey,
 } from '../types/memo';
 import { bdtToMillionStr, formatMillionNumber, parseIndianNumber } from '../utils/numberFormat';
 
@@ -66,6 +69,80 @@ export function resolveICMemo(
   const cib = docs.cibReport;
   const cof = docs.costOfFund;
 
+  const hasStructuredAi = Boolean(
+    ai.sec2LiabilityOurBank ||
+      ai.sec3LiabilityOtherUnits ||
+      ai.sec4CibStatus ||
+      ai.sec5LegalAction ||
+      ai.sec6AuditCompliance ||
+      ai.sec7Security ||
+      ai.sec9HoSanctions ||
+      ai.sec10ClientParticulars ||
+      ai.sec11Financials
+  );
+
+  let mergedBp: BranchProposalData | null = bp
+    ? {
+        ...bp,
+        section10Particulars: { ...bp.section10Particulars },
+      }
+    : hasStructuredAi
+      ? createEmptyBranchProposal()
+      : null;
+
+  if (mergedBp) {
+    if (ai.sec2LiabilityOurBank) {
+      if (ai.sec2LiabilityOurBank.limit.trim()) {
+        mergedBp.sec2Limit = ai.sec2LiabilityOurBank.limit.trim();
+      }
+      if (ai.sec2LiabilityOurBank.validity.trim()) {
+        mergedBp.sec2Validity = ai.sec2LiabilityOurBank.validity.trim();
+      }
+      if (ai.sec2LiabilityOurBank.remarks.trim()) {
+        mergedBp.sec2Remarks = ai.sec2LiabilityOurBank.remarks.trim();
+      }
+    }
+    if (ai.sec3LiabilityOtherUnits) {
+      mergedBp.section3Rows = ai.sec3LiabilityOtherUnits.rows;
+    }
+    if (ai.sec4CibStatus) {
+      mergedBp.section4Rows = ai.sec4CibStatus.rows;
+      if (ai.sec4CibStatus.cibDate.trim()) {
+        mergedBp.section4CibDate = ai.sec4CibStatus.cibDate.trim();
+      }
+    }
+    if (ai.sec5LegalAction) {
+      mergedBp.section5StatusNote = ai.sec5LegalAction.statusNote;
+      mergedBp.section5Rows = ai.sec5LegalAction.rows;
+    }
+    if (ai.sec6AuditCompliance) {
+      mergedBp.section6StatusNote = ai.sec6AuditCompliance.statusNote;
+      mergedBp.section6Rows = ai.sec6AuditCompliance.rows;
+    }
+    if (ai.sec7Security) {
+      mergedBp.section7PrimaryNote = ai.sec7Security.primaryNote;
+      mergedBp.section7PrimaryRows = ai.sec7Security.primaryRows;
+      mergedBp.section7PrimaryTotal = ai.sec7Security.primaryTotal;
+      mergedBp.section7CollateralNote = ai.sec7Security.collateralNote;
+      mergedBp.section7CollateralSchedules = ai.sec7Security.collateralSchedules;
+      mergedBp.section7ValuationRows = ai.sec7Security.valuationRows;
+      mergedBp.section7CoveragePct = ai.sec7Security.coveragePct;
+      mergedBp.section7Others = ai.sec7Security.othersNote;
+    }
+    if (ai.sec9HoSanctions) {
+      mergedBp.section9Rows = ai.sec9HoSanctions.rows;
+    }
+    if (ai.sec10ClientParticulars) {
+      mergedBp.section10Particulars = { ...ai.sec10ClientParticulars.particulars };
+      mergedBp.section10Directors = ai.sec10ClientParticulars.directors;
+      mergedBp.section10BankDirectors = ai.sec10ClientParticulars.bankDirectors;
+    }
+    if (ai.sec11Financials) {
+      mergedBp.section11FinancialsNote = ai.sec11Financials.financialsNote;
+      mergedBp.section11Rows = ai.sec11Financials.rows;
+    }
+  }
+
   const base: Record<string, string> = {
     // 5.1 Manual Inputs
     '#1#': manual.proposalDate.trim(),
@@ -99,8 +176,8 @@ export function resolveICMemo(
     // 5.5 Overdue
     '#59#': ovd ? bdtToMillionStr(ovd.overdueAmountBDT) : '',
 
-    // 5.6 CIB Report
-    '#62#': cib?.cibDate?.trim() || '',
+    // 5.6 CIB Report (authoritative CIB Report first, fallback to Branch Proposal sec 4 if missing)
+    '#62#': cib?.cibDate?.trim() || ai.sec4CibStatus?.cibDate?.trim() || '',
 
     // 5.7 Cost of Fund
     '#31#': cof ? bdtToMillionStr(cof.surplusDeficitBDT) : '',
@@ -109,9 +186,12 @@ export function resolveICMemo(
     '#6#': bp?.limitOriginal?.trim() || '',
     '#33#': bp?.securityMV?.trim() || '',
     '#34#': bp?.securityFSV?.trim() || '',
-    '#54#': bp?.natureOfBusiness?.trim() || '',
-    '#56#': bp?.sec2Limit?.trim() || '',
-    '#58#': bp?.sec2Validity?.trim() || '',
+    '#54#':
+      ai.sec1NatureOfBusiness !== null
+        ? ai.sec1NatureOfBusiness.trim()
+        : bp?.natureOfBusiness?.trim() || '',
+    '#56#': mergedBp?.sec2Limit?.trim() || '',
+    '#58#': mergedBp?.sec2Validity?.trim() || '',
     '#64#': bp?.referenceNo?.trim() || '',
     '#65#': bp?.proposalDate?.trim() || '',
 
@@ -165,19 +245,56 @@ export function resolveICMemo(
         source: spec.source,
         reason:
           spec.code === '#51#'
-            ? 'Not generated yet (click "Generate" in IC Memo or enter manually).'
+            ? 'Not generated yet (click "Scrutinize and Fill Up Through AI" in IC Memo or enter manually).'
             : `Missing or unreadable from ${spec.source}.`,
       });
     }
   }
 
+  const sectionSummaries: Partial<Record<ScrutinySectionKey, string>> = {};
+  if (ai.sec2LiabilityOurBank?.summary?.trim()) {
+    sectionSummaries.sec2LiabilityOurBank = ai.sec2LiabilityOurBank.summary.trim();
+  }
+  if (ai.sec3LiabilityOtherUnits?.summary?.trim()) {
+    sectionSummaries.sec3LiabilityOtherUnits = ai.sec3LiabilityOtherUnits.summary.trim();
+  }
+  if (ai.sec4CibStatus?.summary?.trim()) {
+    sectionSummaries.sec4CibStatus = ai.sec4CibStatus.summary.trim();
+  }
+  if (ai.sec5LegalAction?.summary?.trim()) {
+    sectionSummaries.sec5LegalAction = ai.sec5LegalAction.summary.trim();
+  }
+  if (ai.sec6AuditCompliance?.summary?.trim()) {
+    sectionSummaries.sec6AuditCompliance = ai.sec6AuditCompliance.summary.trim();
+  }
+  if (ai.sec7Security?.summary?.trim()) {
+    sectionSummaries.sec7Security = ai.sec7Security.summary.trim();
+  }
+  if (ai.sec9HoSanctions?.summary?.trim()) {
+    sectionSummaries.sec9HoSanctions = ai.sec9HoSanctions.summary.trim();
+  }
+  if (ai.sec10ClientParticulars?.summary?.trim()) {
+    sectionSummaries.sec10ClientParticulars = ai.sec10ClientParticulars.summary.trim();
+  }
+  if (ai.sec11Financials?.summary?.trim()) {
+    sectionSummaries.sec11Financials = ai.sec11Financials.summary.trim();
+  }
+
   return {
     placeholders: resolved,
     missingFields,
-    sourceOfRepayment: manual.sourceOfRepayment.trim(),
+    sourceOfRepayment:
+      manual.sourceOfRepayment.trim() || (ai.sec8SourceOfRepayment ?? '').trim(),
     justificationLines: resolved['#51#'] || '',
     branchVisitReport: ai.branchVisit !== null ? ai.branchVisit.trim() : '',
     samdObservation: ai.samdObservation !== null ? ai.samdObservation.trim() : '',
-    branchProposal: bp,
+    sec13BranchRecommendation:
+      ai.sec13BranchRecommendation !== null ? ai.sec13BranchRecommendation.trim() : '',
+    sec14IccdRecommendation:
+      ai.sec14IccdRecommendation !== null ? ai.sec14IccdRecommendation.trim() : '',
+    sectionSummaries,
+    sec2NonFundedNote: ai.sec2LiabilityOurBank?.nonFundedNote?.trim() || '',
+    sec7OthersNote: ai.sec7Security?.othersNote?.trim() || '',
+    branchProposal: mergedBp,
   };
 }

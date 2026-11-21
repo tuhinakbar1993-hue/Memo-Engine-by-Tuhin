@@ -180,7 +180,9 @@ export const TemplateManagerPanel: React.FC<TemplateManagerPanelProps> = ({
                       <span>Active</span>
                     </span>
                   ) : (
-                    <span className="text-xs text-slate-400">Default built-in</span>
+                    <span className="text-xs text-slate-400">
+                      {doc.docType === 'ic' ? 'Default built-in' : 'Upload required'}
+                    </span>
                   )}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5 truncate">

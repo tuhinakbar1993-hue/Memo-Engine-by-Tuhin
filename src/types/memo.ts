@@ -247,6 +247,7 @@ export type ScrutinySectionKey =
   | 'sec9HoSanctions'
   | 'sec10ClientParticulars'
   | 'sec11Financials'
+  | 'clientPrayer'
   | 'branchVisit'
   | 'sec13BranchRecommendation'
   | 'sec14IccdRecommendation'
@@ -349,7 +350,8 @@ export interface AiSectionsData {
   sec9HoSanctions: Section9AiData | null; // Section 9
   sec10ClientParticulars: Section10AiData | null; // Section 10
   sec11Financials: Section11AiData | null; // Section 11
-  branchVisit: string | null; // Section 12
+  clientPrayer: string | null; // 12. Contents of the Client's Prayer
+  branchVisit: string | null; // 12. Branch Visit Report
   sec13BranchRecommendation: string | null; // Section 13
   sec14IccdRecommendation: string | null; // Section 14
   samdObservation: string | null; // Section 15
@@ -377,6 +379,7 @@ export interface ResolvedICMemo {
   missingFields: MissingFieldItem[];
   sourceOfRepayment: string;
   justificationLines: string; // #51#
+  clientPrayer: string;
   branchVisitReport: string;
   samdObservation: string;
   sec13BranchRecommendation: string;
@@ -385,6 +388,51 @@ export interface ResolvedICMemo {
   sec2NonFundedNote: string;
   sec7OthersNote: string;
   branchProposal: BranchProposalData | null;
+}
+
+export type StageMemoDocType = 'mec' | 'board' | 'sanction';
+
+export type StageScrutinySectionKey =
+  | 'mecIcRecommendation'
+  | 'mecExecutiveSummary'
+  | 'mecSamdRecommendation'
+  | 'boardMecRecommendation'
+  | 'boardProposalRationale'
+  | 'boardResolutionTerms'
+  | 'sanctionBoardAuthority'
+  | 'sanctionCrossVerifiedSummary'
+  | 'sanctionSpecialConditions';
+
+export interface StageMemoInputs {
+  icMemoNumber: string;
+  icMemoDate: string;
+  mecMemoNumber: string;
+  mecMemoDate: string;
+  boardMemoNumber: string;
+  boardMemoDate: string;
+  sanctionRefNumber: string;
+  sanctionDate: string;
+}
+
+export type StageAiSectionsData = Record<StageScrutinySectionKey, string | null>;
+
+export interface StageBatchScrutinyState {
+  running: boolean;
+  docType: StageMemoDocType | null;
+  total: number;
+  targetSections: StageScrutinySectionKey[];
+  completedSections: StageScrutinySectionKey[];
+  retryingSections: StageScrutinySectionKey[];
+  failedSections: Array<{ section: StageScrutinySectionKey; error: string }>;
+  insufficientSections: Array<{ section: StageScrutinySectionKey; reason: string }>;
+  skippedManualSections: StageScrutinySectionKey[];
+}
+
+export interface ResolvedStageMemo {
+  docType: StageMemoDocType;
+  icMemo: ResolvedICMemo;
+  stageInputs: StageMemoInputs;
+  stageSections: Record<StageScrutinySectionKey, string>;
 }
 
 export interface MemoEngineDefinition {
@@ -416,5 +464,8 @@ export interface AppliedSyncState {
   appliedAt: string | null;
   version: number;
   memo: ResolvedICMemo;
+  stageInputs: StageMemoInputs;
+  stageAiSections: StageAiSectionsData;
 }
+
 

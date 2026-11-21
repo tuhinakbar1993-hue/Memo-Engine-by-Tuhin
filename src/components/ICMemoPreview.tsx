@@ -46,6 +46,7 @@ const SECTION_LABELS: Record<ScrutinySectionKey, string> = {
   sec9HoSanctions: '9. Sequence of Head Office Sanction(s)',
   sec10ClientParticulars: '10. Brief Particulars of The Client',
   sec11Financials: '11. Financials of The Client',
+  clientPrayer: "12. Contents of the Client’s Prayer",
   branchVisit: '12. Branch Visit Report',
   sec13BranchRecommendation: '13. Recommendation of The Branch',
   sec14IccdRecommendation: '14. Recommendation of ICCD',
@@ -549,6 +550,7 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
     key:
       | 'justification'
       | 'sec1NatureOfBusiness'
+      | 'clientPrayer'
       | 'branchVisit'
       | 'sec13BranchRecommendation'
       | 'sec14IccdRecommendation'
@@ -891,11 +893,16 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
           </div>
 
           {/* Metadata Table */}
-          <table className="w-[45%] text-[10pt] border border-black">
+          <table className="w-[45%] table-fixed text-[10pt] border border-black">
+            <colgroup>
+              <col className="w-[28%]" />
+              <col className="w-[7%]" />
+              <col className="w-[65%]" />
+            </colgroup>
             <tbody>
               <tr>
-                <td className="border border-black px-2 py-0.5 font-bold w-[28%]">Dated</td>
-                <td className="border border-black px-1.5 py-0.5 font-bold text-center w-[7%]">:</td>
+                <td className="border border-black px-2 py-0.5 font-bold">Dated</td>
+                <td className="border border-black px-1.5 py-0.5 font-bold text-center">:</td>
                 <td className="border border-black px-2 py-0.5 font-bold">
                   <Token ph={ph} code="#1#" />
                 </td>
@@ -919,13 +926,17 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
           </table>
 
           {/* A/C & Branch + Subject */}
-          <table className="w-full text-[10pt] border border-dotted border-black">
+          <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+            <colgroup>
+              <col className="w-[58%]" />
+              <col className="w-[42%]" />
+            </colgroup>
             <tbody>
               <tr>
-                <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center w-[58%]">
+                <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center">
                   A/C: <Token ph={ph} code="#2#" /> (CIS: <Token ph={ph} code="#69#" />)
                 </td>
-                <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center w-[42%]">
+                <td className="border border-dotted border-black px-2 py-0.5 font-bold text-center">
                   Branch: <Token ph={ph} code="#3#" />
                 </td>
               </tr>
@@ -944,28 +955,38 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
           </p>
 
           {/* Main Settlement Table */}
-          <table className="w-full text-[10pt] border border-dotted border-black">
+          <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+            <colgroup>
+              <col className="w-[12%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[21%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
+              <col className="w-[19%]" />
+            </colgroup>
             <thead>
               <tr>
-                <th rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center w-[12%]">
+                <th rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center">
                   Mode
                 </th>
-                <th colSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center w-[15%]">
+                <th colSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center">
                   Limit
                 </th>
-                <th rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center w-[21%]">
+                <th rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center">
                   Particulars
                 </th>
-                <th className="border border-dotted border-black px-1.5 py-0.5 text-center w-[11%]">
+                <th className="border border-dotted border-black px-1.5 py-0.5 text-center">
                   O/S as on <Token ph={ph} code="#68#" />
                 </th>
-                <th className="border border-dotted border-black px-1.5 py-0.5 text-center w-[11%]">
+                <th className="border border-dotted border-black px-1.5 py-0.5 text-center">
                   Proposed Waiver
                 </th>
-                <th className="border border-dotted border-black px-1.5 py-0.5 text-center w-[11%]">
+                <th className="border border-dotted border-black px-1.5 py-0.5 text-center">
                   Settlement Amount
                 </th>
-                <th rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center w-[19%]">
+                <th rowSpan={2} className="border border-dotted border-black px-1.5 py-0.5 text-center">
                   Remarks
                 </th>
               </tr>
@@ -979,7 +1000,7 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
             </thead>
             <tbody>
               <tr>
-                <td rowSpan={7} className="border border-dotted border-black px-1.5 py-0.5 font-bold">
+                <td rowSpan={7} className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
                   <Token ph={ph} code="#5#" />
                 </td>
                 <td rowSpan={7} className="border border-dotted border-black px-1.5 py-0.5 text-center font-bold">
@@ -1103,29 +1124,37 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               <span className="font-bold">BRPD 1 Circular Letter No. 23 dated 29.06.2026</span> under
               the following contexts:
             </p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
+            <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+              <colgroup>
+                <col className="w-[5%]" />
+                <col className="w-[42%]" />
+                <col className="w-[11%]" />
+                <col className="w-[5%]" />
+                <col className="w-[22%]" />
+                <col className="w-[15%]" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th colSpan={3} className="border border-dotted border-black px-2 py-0.5 text-left w-[58%]">
+                  <th colSpan={3} className="border border-dotted border-black px-2 py-0.5 text-left">
                     Particulars
                   </th>
-                  <th colSpan={3} className="border border-dotted border-black px-2 py-0.5 text-left w-[42%]">
+                  <th colSpan={3} className="border border-dotted border-black px-2 py-0.5 text-left">
                     Waiver recommended by:
                   </th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[5%]">a.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[42%]">
+                  <td className="border border-dotted border-black px-1.5 py-0.5">a.</td>
+                  <td className="border border-dotted border-black px-1.5 py-0.5">
                     Total [Profit+ Compensation+ Uncharged Comp.&amp; Profit]
                   </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[11%] font-bold">
+                  <td className="border border-dotted border-black px-1.5 py-0.5 font-bold">
                     : <Token ph={ph} code="#42#" />
                   </td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[5%]">d.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[22%]">Client</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[15%] font-bold">
+                  <td className="border border-dotted border-black px-1.5 py-0.5">d.</td>
+                  <td className="border border-dotted border-black px-1.5 py-0.5">Client</td>
+                  <td className="border border-dotted border-black px-1.5 py-0.5 font-bold">
                     : <Token ph={ph} code="#45#" />
                   </td>
                 </tr>
@@ -1348,19 +1377,29 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[14%]" />
+                    <col className="w-[17%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[17%]" />
+                    <col className="w-[10%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Concern</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Mode of Investment</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Limit</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Outstanding</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Validity</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Overdue</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Name of the Concern</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Mode of Investment</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Limit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Outstanding</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Validity</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Overdue</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">
                         Recovery in existing deals till date [Mode wise]
                       </th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Remarks</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1595,32 +1634,43 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[9.5pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[5%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[17%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[17%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[8%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1 py-0.5">SL</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Name of Concern</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Banks/NBFIs</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Nature of Facility</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Limit</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Outstanding with profit/Interest</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Overdue/EOL</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Expiry Date</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">CL Status</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">SL</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Name of Concern</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Name of the Banks/NBFIs</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Nature of Facility</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Limit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Outstanding with profit/Interest</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Overdue/EOL</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Expiry Date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">CL Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rawSec3Rows.map((r, i) => (
                       <tr key={i}>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.sl}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{r.nameOfConcern}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{r.bankOrNbfi}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{r.natureOfFacility}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.limit}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.outstanding}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.overdueEol}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.expiryDate}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.clStatus}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.limit}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.outstanding}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.overdueEol}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.expiryDate}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.clStatus}</td>
                       </tr>
                     ))}
                     {!hasSec3SubTotal && (
@@ -1748,10 +1798,18 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[18%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[30%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th rowSpan={2} className="border border-dotted border-black px-1 py-0.5">STATUS</th>
+                      <th rowSpan={2} className="border border-dotted border-black px-1 py-0.5 text-left">STATUS</th>
                       <th colSpan={2} className="border border-dotted border-black px-1 py-0.5 text-center">
                         With respective unit
                       </th>
@@ -1942,17 +2000,27 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[9.5pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[5%]" />
+                    <col className="w-[16%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[18%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1 py-0.5">Sl</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Type of Case</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Case No.</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Filling date</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Amount</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Previous date</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Next date</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Present status</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Sl</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Type of Case</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Case No.</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Filling date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Amount</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Previous date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Next date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Present status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1960,13 +2028,13 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
                       const isEmpty = !r.sl && !r.typeOfCase && !r.caseNo;
                       return (
                         <tr key={i} className={isEmpty ? 'h-9' : ''}>
-                          <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.sl}</td>
                           <td className="border border-dotted border-black px-1 py-0.5">{r.typeOfCase}</td>
                           <td className="border border-dotted border-black px-1 py-0.5">{r.caseNo}</td>
-                          <td className="border border-dotted border-black px-1 py-0.5">{r.filingDate}</td>
-                          <td className="border border-dotted border-black px-1 py-0.5">{r.amount}</td>
-                          <td className="border border-dotted border-black px-1 py-0.5">{r.previousDate}</td>
-                          <td className="border border-dotted border-black px-1 py-0.5">{r.nextDate}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.filingDate}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.amount}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.previousDate}</td>
+                          <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.nextDate}</td>
                           <td className="border border-dotted border-black px-1 py-0.5">{r.presentStatus}</td>
                         </tr>
                       );
@@ -2081,24 +2149,32 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[9.5pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[5%]" />
+                    <col className="w-[19%]" />
+                    <col className="w-[16%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[23%]" />
+                    <col className="w-[23%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1 py-0.5">SL</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Authority</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Last Inspection / Report Date</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Objection Status (Yes/No)</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Objections (If yes)</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Branch Reply/ Current Position</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">SL</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Name of the Authority</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Last Inspection / Report Date</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Objection Status (Yes/No)</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Objections (If yes)</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Branch Reply/ Current Position</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sec6Rows.map((r, i) => (
                       <tr key={i}>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.sl}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.sl}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{r.authority}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.lastInspectionDate}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.objectionStatus}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.lastInspectionDate}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.objectionStatus}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{r.objections}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{r.branchReply}</td>
                       </tr>
@@ -2364,11 +2440,15 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
                 <p className="font-bold pl-2">
                   <span className="underline">a. Primary:</span> {bp?.section7PrimaryNote || ''}
                 </p>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[75%]" />
+                    <col className="w-[25%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-2 py-0.5 text-left w-[75%]">Particulars</th>
-                      <th className="border border-dotted border-black px-2 py-0.5 text-center w-[25%]">Value</th>
+                      <th className="border border-dotted border-black px-2 py-0.5 text-left">Particulars</th>
+                      <th className="border border-dotted border-black px-2 py-0.5 text-center">Value</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2398,10 +2478,23 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
                   ))}
                 </div>
 
-                <table className="w-full text-[9pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[9pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[13%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                    <col className="w-[8.7%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th rowSpan={4} className="border border-dotted border-black px-1 py-1 align-middle">
+                      <th rowSpan={4} className="border border-dotted border-black px-1 py-1 align-middle text-center">
                         Schedule
                       </th>
                       <th colSpan={10} className="border border-dotted border-black px-1 py-0.5 text-center">
@@ -2450,16 +2543,16 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
                     {sec7ValRows.map((r, i) => (
                       <tr key={i} className={/Grand/i.test(r.schedule) ? 'font-bold' : ''}>
                         <td className="border border-dotted border-black px-1 py-0.5">{r.schedule}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.origBranchMv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.origBranchFsv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.origSurvMv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.origSurvFsv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.presBranchMv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.presBranchFsv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.presSurvMv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.presSurvFsv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.presAvMv}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.presAvFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.origBranchMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.origBranchFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.origSurvMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.origSurvFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.presBranchMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.presBranchFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.presSurvMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.presSurvFsv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.presAvMv}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.presAvFsv}</td>
                       </tr>
                     ))}
                     <tr>
@@ -2622,23 +2715,30 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[7%]" />
+                    <col className="w-[36%]" />
+                    <col className="w-[16%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[26%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[7%]">SL</th>
-                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[36%]">HO Sanction Reference No.</th>
-                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[16%]">Date</th>
-                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[15%]">Limit</th>
-                      <th className="border border-dotted border-black px-1.5 py-0.5 w-[26%]">Remarks</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 text-center">SL</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 text-left">HO Sanction Reference No.</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 text-center">Date</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 text-center">Limit</th>
+                      <th className="border border-dotted border-black px-1.5 py-0.5 text-left">Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sec9Rows.map((r, i) => (
                       <tr key={i}>
-                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.sl}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.sl}</td>
                         <td className="border border-dotted border-black px-1.5 py-0.5">{r.referenceNo}</td>
-                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.date}</td>
-                        <td className="border border-dotted border-black px-1.5 py-0.5">{r.limit}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.date}</td>
+                        <td className="border border-dotted border-black px-1.5 py-0.5 text-center">{r.limit}</td>
                         <td className="border border-dotted border-black px-1.5 py-0.5">{r.remarks}</td>
                       </tr>
                     ))}
@@ -2926,13 +3026,19 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[6%]" />
+                    <col className="w-[37%]" />
+                    <col className="w-[4%]" />
+                    <col className="w-[53%]" />
+                  </colgroup>
                   <tbody>
                     <tr>
-                      <td className="border border-dotted border-black px-1.5 py-0.5 w-[6%]">a.</td>
-                      <td className="border border-dotted border-black px-1.5 py-0.5 w-[37%]">Name of the Client</td>
-                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center w-[4%]">:</td>
-                      <td className="border border-dotted border-black px-1.5 py-0.5 w-[53%]">{sp?.nameOfClient || ''}</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">a.</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">Name of the Client</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5 text-center">:</td>
+                      <td className="border border-dotted border-black px-1.5 py-0.5">{sp?.nameOfClient || ''}</td>
                     </tr>
                     <tr>
                       <td className="border border-dotted border-black px-1.5 py-0.5">b.</td>
@@ -3026,28 +3132,37 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
                 <p className="font-bold underline text-[10pt]">
                   • Particular of the Proprietor/Partner/Directors:
                 </p>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[9.5pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[16%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[12%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Directors</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Age</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Education</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Designation</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Share (%)</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Experience</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Net worth</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Name of the Directors</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Age</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Education</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Designation</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Share (%)</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Experience</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Net worth</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dirRows.map((d, i) => (
                       <tr key={i} className={!d.name && !d.age ? 'h-6' : ''}>
                         <td className="border border-dotted border-black px-1 py-0.5">{d.name}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{d.age}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{d.age}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{d.education}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{d.designation}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{d.sharePct}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{d.experience}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{d.netWorth}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{d.sharePct}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{d.experience}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{d.netWorth}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3056,14 +3171,21 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
                 <p className="font-bold underline text-[10pt]">
                   • Remarks: Director of any Bank/ FI/ Insurance company:
                 </p>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[9.5pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[22%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[19%]" />
+                    <col className="w-[19%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1 py-0.5">Name of the Director</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Name of the bank/NBFIs</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Designation/Position</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Percentage of Shares</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Number of Shares</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Name of the Director</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Name of the bank/NBFIs</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-left">Designation/Position</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Percentage of Shares</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Number of Shares</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3072,8 +3194,8 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
                         <td className="border border-dotted border-black px-1 py-0.5">{d.name}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{d.bankNbfi}</td>
                         <td className="border border-dotted border-black px-1 py-0.5">{d.designation}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{d.sharePct}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{d.numShares}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{d.sharePct}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{d.numShares}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3235,34 +3357,62 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
               </div>
             ) : (
               <>
-                <table className="w-full text-[10pt] border border-dotted border-black">
+                <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+                  <colgroup>
+                    <col className="w-[10%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[15%]" />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th className="border border-dotted border-black px-1 py-0.5">Year</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Gross Sales</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Gross Profit</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Net Profit</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Total Asset</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Total liabilities</th>
-                      <th className="border border-dotted border-black px-1 py-0.5">Net Worth</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Year</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Gross Sales</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Gross Profit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Net Profit</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Total Asset</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Total liabilities</th>
+                      <th className="border border-dotted border-black px-1 py-0.5 text-center">Net Worth</th>
                     </tr>
                   </thead>
                   <tbody>
                     {finRows.map((r, i) => (
                       <tr key={i} className={!r.year && !r.grossSales ? 'h-6' : ''}>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.year}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.grossSales}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.grossProfit}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.netProfit}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.totalAsset}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.totalLiabilities}</td>
-                        <td className="border border-dotted border-black px-1 py-0.5">{r.netWorth}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.year}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.grossSales}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.grossProfit}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.netProfit}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.totalAsset}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.totalLiabilities}</td>
+                        <td className="border border-dotted border-black px-1 py-0.5 text-center">{r.netWorth}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </>
             )}
+          </div>
+
+          {/* SECTION 12: Contents of the Client's Prayer */}
+          <div className="space-y-1 text-[10pt]">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-bold underline pt-0.5">12. Contents of the Client’s Prayer:</p>
+              <SectionActionToolbar {...toolbarProps('clientPrayer')} />
+            </div>
+            {isEditing('clientPrayer') ? (
+              <textarea
+                rows={4}
+                value={aiSections.clientPrayer ?? memo.clientPrayer}
+                onChange={(e) => updateNarrativeAi('clientPrayer', e.target.value)}
+                placeholder="Enter Contents of the Client’s Prayer or click Scrutinize and Fill Up Through AI..."
+                className="w-full font-memo text-[10pt] p-2 border border-emerald-600 rounded bg-emerald-50/20 focus:outline-none"
+              />
+            ) : memo.clientPrayer ? (
+              <p className="whitespace-pre-line">{memo.clientPrayer}</p>
+            ) : null}
           </div>
 
           {/* SECTION 12: Branch Visit Report */}
@@ -3355,11 +3505,16 @@ export const ICMemoPreview: React.FC<ICMemoPreviewProps> = ({
           {/* Section 16 */}
           <div className="space-y-1">
             <p className="font-bold underline text-[10pt]">16. Particulars of the facility:</p>
-            <table className="w-full text-[10pt] border border-dotted border-black">
+            <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
+              <colgroup>
+                <col className="w-[5%]" />
+                <col className="w-[24%]" />
+                <col className="w-[71%]" />
+              </colgroup>
               <tbody>
                 <tr>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[5%]">a.</td>
-                  <td className="border border-dotted border-black px-1.5 py-0.5 w-[24%]">Facility</td>
+                  <td className="border border-dotted border-black px-1.5 py-0.5 text-center">a.</td>
+                  <td className="border border-dotted border-black px-1.5 py-0.5">Facility</td>
                   <td className="border border-dotted border-black px-1.5 py-0.5 font-bold">
                     EXIT with Waiver under BRPD 1 Circular Letter No. 23 dated 29.06.2026
                   </td>

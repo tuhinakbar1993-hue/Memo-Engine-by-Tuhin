@@ -5,6 +5,9 @@ import type {
   ExtractedDocumentsState,
   ManualInputsData,
   ScrutinySectionKey,
+  StageAiSectionsData,
+  StageMemoInputs,
+  StageScrutinySectionKey,
 } from '../types/memo';
 
 const DB_NAME = 'memo_engine_case_db';
@@ -20,6 +23,9 @@ export interface PersistedCaseState {
   aiSections: AiSectionsData;
   overrides: Record<string, string>;
   manualEditedSections: Partial<Record<ScrutinySectionKey, boolean>>;
+  stageInputs?: StageMemoInputs;
+  stageAiSections?: StageAiSectionsData;
+  stageManualEditedSections?: Partial<Record<StageScrutinySectionKey, boolean>>;
   docUploadedFlags?: Partial<Record<DocumentKey, { uploaded: boolean; fileName: string }>>;
 }
 
@@ -63,6 +69,9 @@ export async function saveCentralCaseState(
     aiSections: state.aiSections,
     overrides: state.overrides,
     manualEditedSections: state.manualEditedSections,
+    stageInputs: state.stageInputs,
+    stageAiSections: state.stageAiSections,
+    stageManualEditedSections: state.stageManualEditedSections,
     docUploadedFlags,
   };
 

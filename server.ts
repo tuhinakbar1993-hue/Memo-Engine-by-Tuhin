@@ -39,10 +39,24 @@ type ScrutinySectionKey =
   | 'sec9HoSanctions'
   | 'sec10ClientParticulars'
   | 'sec11Financials'
+  | 'clientPrayer'
   | 'branchVisit'
   | 'sec13BranchRecommendation'
   | 'sec14IccdRecommendation'
   | 'samdObservation';
+
+type StageMemoDocType = 'mec' | 'board' | 'sanction';
+
+type StageScrutinySectionKey =
+  | 'mecIcRecommendation'
+  | 'mecExecutiveSummary'
+  | 'mecSamdRecommendation'
+  | 'boardMecRecommendation'
+  | 'boardProposalRationale'
+  | 'boardResolutionTerms'
+  | 'sanctionBoardAuthority'
+  | 'sanctionCrossVerifiedSummary'
+  | 'sanctionSpecialConditions';
 
 function strField(description: string): Schema {
   return { type: Type.STRING, description };
@@ -512,6 +526,22 @@ Extract:
         },
       };
 
+    case 'clientPrayer':
+      return {
+        prompt: `Scrutinize the uploaded Branch Proposal thoroughly for any details of the customer's written application / prayer ("Contents of the Client's Prayer", client's request letter/application, subject clause, requested waiver amount, offered settlement amount & down payment, proposed repayment period/timeline, stated business distress/reasons for default, and commitment for full and final exit).
+Write clean, concise, official banking prose for IC Memo Section "12. Contents of the Client's Prayer:" strictly grounded in the Branch Proposal and verified memo figures below.
+CRITICAL CLEAN-TEXT RULES: Output ONLY formal third-person banking memorandum prose describing the client's prayer/request in "text" (1-2 concise formal paragraphs). Do NOT include "Based on the uploaded document", conversational framing, AI notes, or markdown asterisks.
+If the Branch Proposal contains insufficient information about the client's application/prayer, keep ONLY verified facts (or "" if none) in "text" and explain what is missing strictly inside "insufficientReason".`,
+        schema: {
+          type: Type.OBJECT,
+          properties: {
+            text: strField("Clean official banking prose summarizing Contents of the Client's Prayer, or '' if unavailable."),
+            insufficientReason: strField('Empty string "" if supported; otherwise brief UI note listing missing client prayer details.'),
+          },
+          required: ['text', 'insufficientReason'],
+        },
+      };
+
     case 'branchVisit':
       return {
         prompt: `Scrutinize all relevant sections of the uploaded Branch Proposal (Section 12 "Branch Visit Report", Section 10 Client Particulars, office/factory addresses, last visit date, stock position, fixed assets, business net worth, Section 7 security details, and branch recommendations) to write Section "12. Branch Visit Report:" for the Head Office IC Memo.
@@ -596,6 +626,7 @@ const VALID_SCRUTINY_SECTIONS = new Set<ScrutinySectionKey>([
   'sec9HoSanctions',
   'sec10ClientParticulars',
   'sec11Financials',
+  'clientPrayer',
   'branchVisit',
   'sec13BranchRecommendation',
   'sec14IccdRecommendation',
@@ -760,6 +791,7 @@ const NARRATIVE_SECTION_KEYS = new Set<ScrutinySectionKey>([
   'justification',
   'sec1NatureOfBusiness',
   'sec8SourceOfRepayment',
+  'clientPrayer',
   'branchVisit',
   'sec13BranchRecommendation',
   'sec14IccdRecommendation',
@@ -1289,6 +1321,8 @@ async function startServer() {
           samdContext.justificationLines = String(result.text);
         } else if (section === 'sec8SourceOfRepayment' && result.text) {
           samdContext.sourceOfRepayment = String(result.text);
+        } else if (section === 'clientPrayer' && result.text) {
+          samdContext.clientPrayer = String(result.text);
         } else if (section === 'branchVisit' && result.text) {
           samdContext.branchVisitReport = String(result.text);
         } else if (section === 'sec13BranchRecommendation' && result.text) {
@@ -1534,6 +1568,399 @@ ${batchContext}`,
             error: message,
           })}\n\n`
         );
+        res.end();
+      }
+    }
+  });
+
+  const VALID_STAGE_DOCS = new Set<StageMemoDocType>(['mec', 'board', 'sanction']);
+  const STAGE_SECTIONS_MAP: Record<StageMemoDocType, StageScrutinySectionKey[]> = {
+    mec: ['mecIcRecommendation', 'mecExecutiveSummary', 'mecSamdRecommendation'],
+    board: ['boardMecRecommendation', 'boardProposalRationale', 'boardResolutionTerms'],
+    sanction: ['sanctionBoardAuthority', 'sanctionCrossVerifiedSummary', 'sanctionSpecialConditions'],
+  };
+
+  function getStageSectionConfig(
+    section: StageScrutinySectionKey,
+    context?: Record<string, unknown>
+  ): { prompt: string; schema: Schema } {
+    const stageInputs = (context?.stageInputs ?? {}) as Record<string, string>;
+    const icNo = (stageInputs.icMemoNumber || '').trim() || '[IC Memo Number]';
+    const icDt = (stageInputs.icMemoDate || '').trim() || '[IC Memo Date]';
+    const mecNo = (stageInputs.mecMemoNumber || '').trim() || '[MEC Memo Number]';
+    const mecDt = (stageInputs.mecMemoDate || '').trim() || '[MEC Memo Date]';
+    const boardNo = (stageInputs.boardMemoNumber || '').trim() || '[Board Memo Number]';
+    const boardDt = (stageInputs.boardMemoDate || '').trim() || '[Board Memo Date]';
+
+    const schema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        text: strField('Clean official formal banking text for this memo section, or "" if source inputs are absent.'),
+        insufficientReason: strField('Empty string "" if supported; otherwise concise UI note listing missing fields/inputs.'),
+      },
+      required: ['text', 'insufficientReason'],
+    };
+
+    switch (section) {
+      case 'mecIcRecommendation':
+        return {
+          prompt: `Write Section "Recommendation of the Investment Committee (IC)" for the Management Executive Committee (MEC) Memorandum.
+You MUST explicitly incorporate IC Memo Number "${icNo}" and IC Memo Date "${icDt}" into the formal recommendation wording (e.g., referencing the Investment Committee's recommendation vide IC Memo No. ${icNo} dated ${icDt}), accurately stating the recommended Exit with Waiver facility under BRPD Circular Letter No. 23 dated 29.06.2026, NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), Settlement Period (#28#), Cost of Fund compliance (#31#, #44#), and placement before the MEC for kind consideration.
+Cross-verify all figures strictly against the IC Memo context and Branch Proposal. Output ONLY clean official banking text with no AI preambles or markdown asterisks.`,
+          schema,
+        };
+      case 'mecExecutiveSummary':
+        return {
+          prompt: `Scrutinize the Branch Proposal together with the complete carried-forward IC Memo data (including Contents of the Client's Prayer, Justification, Liability Positions, CIB Status, Legal/Audit Status, Security Valuation MV/FSV, Source of Repayment, Branch Visit Report, Branch Recommendation, and SAMD Observation) and write Section "Executive Appraisal & Waiver Rationale for MEC".
+Write 2 concise, structured formal banking paragraphs synthesizing the borrower's distress, security coverage, Cost of Fund surplus/deficit vs maximum permissible waiver, and strategic recovery benefit for the Management Executive Committee without altering any IC Memo figures. Clean official prose only, no asterisks.`,
+          schema,
+        };
+      case 'mecSamdRecommendation':
+        return {
+          prompt: `Write Section "Observation and Recommendation of SAMD for MEC" placing this Exit with Waiver proposal before the Management Executive Committee after Investment Committee scrutiny (referencing IC Memo No. ${icNo} dated ${icDt} if provided).
+Write 3 to 4 crisp numbered formal points ("1. ...", "2. ...", "3. ...") summarizing verified liability & COF recovery protection, compliance with special terms & conditions, and formal recommendation for MEC approval/onward placement before the Board. Clean official prose only.`,
+          schema,
+        };
+      case 'boardMecRecommendation':
+        return {
+          prompt: `Write Section "Recommendation of the Management Executive Committee (MEC)" for the Board of Directors Memorandum.
+You MUST explicitly incorporate MEC Memo Number "${mecNo}" and MEC Memo Date "${mecDt}" (while preserving reference to IC Memo No. ${icNo} dated ${icDt} where available), accurately summarizing the MEC's recommendation for Exit with Waiver under BRPD Circular Letter No. 23 dated 29.06.2026 covering Account (#2#), Branch (#3#), NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), and Settlement Period (#28#).
+Clean formal banking prose only; no markdown asterisks or AI notes.`,
+          schema,
+        };
+      case 'boardProposalRationale':
+        return {
+          prompt: `Scrutinize all carried-forward IC Memo & MEC Memo data alongside the Branch Proposal and write Section "Board Memorandum Summary & Financial Justification" for submission to the Board of Directors.
+Cover: (1) account classification, CIB/legal/regulatory verification, (2) financial recovery & Cost of Fund protection analysis (Principal #7#, Charges #8#, COF #31#, Breakup Total #32# vs Settlement Amount #27#, Max Waiver #44# vs Proposed Waiver #4#), and (3) why full and final settlement with waiver maximizes timely cash recovery over prolonged recovery proceedings. Clean formal banking prose only.`,
+          schema,
+        };
+      case 'boardResolutionTerms':
+        return {
+          prompt: `Write Section "Proposed Board Resolution & Approval Terms" for the Board Memorandum, framing a formal resolution for approval by the Board of Directors of Sammilito Islami Bank PLC for the proposed Exit with Waiver (Account #2#, Branch #3#, Settlement Amount #27# Million, Waiver #4# Million, Deadline #28#) subject to compliance with Special Terms & Conditions and Bangladesh Bank BRPD Circular Letter No. 23 dated 29.06.2026. Clean formal banking prose only.`,
+          schema,
+        };
+      case 'sanctionBoardAuthority':
+        return {
+          prompt: `Write Section "Board Approval Reference & Sanction Basis" for the Head Office Sanction Letter.
+You MUST explicitly incorporate Board Memo Number "${boardNo}" and Board Memo Date "${boardDt}" (and preserve chain references to MEC Memo No. ${mecNo} dated ${mecDt} and IC Memo No. ${icNo} dated ${icDt} where available), formally conveying Head Office sanction for the approved Exit with Waiver facility for A/C ${'#2#'} of ${'#3#'} Branch under BRPD Circular Letter No. 23 dated 29.06.2026. Clean official Head Office Sanction Letter prose only.`,
+          schema,
+        };
+      case 'sanctionCrossVerifiedSummary':
+        return {
+          prompt: `Perform an AI cross-verification across ALL uploaded source documents (Outstanding, Party Performance, Overdue, Account Statement, CIB Report, Cost of Fund, Branch Proposal) and the chained IC -> MEC -> Board memo data to write Section "AI Cross-Verified Facility & Liability Confirmation" for the Sanction Letter.
+Confirm exact verified figures in Million BDT (NET Outstanding #25#, Principal #7#, Charges #8#, Down Payment #35# in A/C #36#, Cost of Fund #31#, Breakup Total #32#, Proposed Waiver #4#, Settlement/Exit Amount #27#, Settlement Period #28#, Security MV #33# & FSV #34#) and confirm no discrepancy against Branch Proposal and Board sanction parameters. Clean official prose only; flag any missing verification input strictly inside "insufficientReason".`,
+          schema,
+        };
+      case 'sanctionSpecialConditions':
+        return {
+          prompt: `Write Section "Operative Terms, Conditions & Redemption Covenants" tailored for this Head Office Sanction Letter based on the verified account particulars, security position, legal/CIB status, and Board Memo No. ${boardNo} dated ${boardDt}.
+Write crisp numbered operative covenants ("i. ...", "ii. ...", etc.) covering adjustment of settlement within ${'#28#'}, determination of final up-to-date settlement balance at execution date, clearance of all direct/indirect/non-funded (L/C, BG, Credit Card) liabilities prior to collateral redemption, non-reduction of profit rate to 0.00% until full adjustment, legal/suit withdrawal cost recovery, and automatic cancellation on default. Clean official banking prose only.`,
+          schema,
+        };
+    }
+  }
+
+  function resolveOptionalStageSource(
+    sourceId?: string,
+    incoming?: IncomingBranchProposalSource | null
+  ): CachedBranchProposalSource | null {
+    if (incoming) {
+      const id = (incoming.sourceId || sourceId || `stage_${Date.now()}`).trim();
+      const built = buildCachedSource(id, incoming);
+      if (built && (incoming.sourceId || sourceId)) {
+        storeCachedSource(id, built);
+      }
+      return built;
+    }
+    if (sourceId && branchProposalCache.has(sourceId.trim())) {
+      return branchProposalCache.get(sourceId.trim()) ?? null;
+    }
+    return null;
+  }
+
+  async function scrutinizeSingleStageSection(
+    ai: GoogleGenAI,
+    section: StageScrutinySectionKey,
+    source: CachedBranchProposalSource | null,
+    context?: Record<string, unknown>,
+    shouldStop?: () => boolean
+  ): Promise<{ result: Record<string, unknown>; insufficient: boolean; insufficientReason: string }> {
+    const { prompt, schema } = getStageSectionConfig(section, context);
+    const contextStr = JSON.stringify(context ?? {});
+    const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${section}::${hashString(contextStr)}`;
+    const cached = sectionResultCache.get(cacheKey);
+    if (cached) return cached;
+
+    const textPayload = `${prompt}
+
+${source ? `Uploaded Branch Proposal File: ${source.fileName}\nExtracted Text:\n${source.rawText}\n` : ''}
+Chained Memo & Verified Document Context (IC Memo -> MEC Memo -> Board Memo -> Sanction + Stage Inputs):
+${contextStr}`;
+
+    const parts: Array<
+      | { inlineData: { mimeType: string; data: string } }
+      | { text: string }
+    > = source ? [...source.imageParts, { text: textPayload }] : [{ text: textPayload }];
+
+    const response = await executeWithModelFallback(
+      (model) =>
+        ai.models.generateContent({
+          model,
+          contents: { parts },
+          config: buildModelConfig(model, {
+            systemInstruction: SCRUTINY_SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            responseSchema: schema,
+          }),
+        }),
+      shouldStop
+    );
+
+    const parsed = JSON.parse((response.text ?? '{}').trim()) as Record<string, unknown>;
+    const rawText = String(parsed.text ?? '').trim();
+    const cleanText = sanitizeAiMemoText(rawText);
+    const modelReason = String(parsed.insufficientReason ?? '').trim();
+    const insufficient = Boolean(modelReason) || cleanText === '';
+    const evaluated = {
+      result: { text: cleanText, insufficientReason: modelReason },
+      insufficient,
+      insufficientReason:
+        modelReason || (!cleanText ? 'Required chained memo context or source data is unavailable.' : ''),
+    };
+    storeSectionCache(cacheKey, evaluated);
+    return evaluated;
+  }
+
+  app.post('/api/gemini/scrutinize-stage-section', async (req, res) => {
+    try {
+      const { docType, section, sourceId, branchProposalSource, context } = req.body as {
+        docType: StageMemoDocType;
+        section: StageScrutinySectionKey;
+        sourceId?: string;
+        branchProposalSource?: IncomingBranchProposalSource | null;
+        context?: Record<string, unknown>;
+      };
+
+      if (!docType || !VALID_STAGE_DOCS.has(docType) || !STAGE_SECTIONS_MAP[docType].includes(section)) {
+        res.status(400).json({ error: 'Invalid memo stage or section key.' });
+        return;
+      }
+
+      const source = resolveOptionalStageSource(sourceId, branchProposalSource);
+      const ai = getAiClient();
+      const evaluated = await scrutinizeSingleStageSection(ai, section, source, context);
+      res.json({
+        result: evaluated.result,
+        insufficient: evaluated.insufficient,
+        insufficientReason: evaluated.insufficientReason,
+        sourceId: source?.sourceId,
+      });
+    } catch (error) {
+      console.error('Error scrutinizing stage memo section:', error);
+      res.status(500).json({ error: formatGeminiError(error, 'Failed to generate stage section.') });
+    }
+  });
+
+  app.post('/api/gemini/scrutinize-stage-all', async (req, res) => {
+    try {
+      const { docType, sections, sourceId, branchProposalSource, context } = req.body as {
+        docType: StageMemoDocType;
+        sections?: StageScrutinySectionKey[];
+        sourceId?: string;
+        branchProposalSource?: IncomingBranchProposalSource | null;
+        context?: Record<string, unknown>;
+      };
+
+      if (!docType || !VALID_STAGE_DOCS.has(docType)) {
+        res.status(400).json({ error: 'Invalid stage memo type.' });
+        return;
+      }
+
+      const allowed = STAGE_SECTIONS_MAP[docType];
+      const targetSections = (
+        Array.isArray(sections) && sections.length > 0 ? sections : allowed
+      ).filter((s): s is StageScrutinySectionKey => allowed.includes(s));
+
+      if (targetSections.length === 0) {
+        res.status(400).json({ error: 'No valid stage sections requested.' });
+        return;
+      }
+
+      const source = resolveOptionalStageSource(sourceId, branchProposalSource);
+      const ai = getAiClient();
+
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      let clientClosed = false;
+      res.on('close', () => {
+        if (!res.writableEnded) clientClosed = true;
+      });
+
+      const writeEvent = (payload: Record<string, unknown>) => {
+        if (clientClosed || res.writableEnded) return;
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      };
+
+      const contextStr = JSON.stringify(context ?? {});
+      const uncached: StageScrutinySectionKey[] = [];
+      for (const sec of targetSections) {
+        const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${sec}::${hashString(contextStr)}`;
+        const cached = sectionResultCache.get(cacheKey);
+        if (cached) {
+          writeEvent({
+            type: 'section',
+            section: sec,
+            result: cached.result,
+            insufficient: cached.insufficient,
+            insufficientReason: cached.insufficientReason,
+          });
+        } else {
+          uncached.push(sec);
+        }
+      }
+
+      if (uncached.length === 1 && !clientClosed) {
+        const sec = uncached[0];
+        try {
+          const ev = await scrutinizeSingleStageSection(ai, sec, source, context, () => clientClosed);
+          writeEvent({
+            type: 'section',
+            section: sec,
+            result: ev.result,
+            insufficient: ev.insufficient,
+            insufficientReason: ev.insufficientReason,
+          });
+        } catch (err) {
+          if (!clientClosed) {
+            writeEvent({
+              type: 'error',
+              section: sec,
+              error: formatGeminiError(err, 'Failed to generate stage section.'),
+            });
+          }
+        }
+      } else if (uncached.length > 1 && !clientClosed) {
+        const properties: Record<string, Schema> = {};
+        const promptBlocks: string[] = [];
+        for (const sec of uncached) {
+          const cfg = getStageSectionConfig(sec, context);
+          properties[sec] = cfg.schema;
+          promptBlocks.push(`### STAGE SECTION KEY "${sec}":\n${cfg.prompt}`);
+        }
+        const batchPrompt = `Generate ALL ${uncached.length} requested ${docType.toUpperCase()} document sections in one clean JSON object. Follow every integrity and formatting rule.\n\n${promptBlocks.join('\n\n')}`;
+        const textPayload = `${batchPrompt}\n\n${source ? `Uploaded Branch Proposal File: ${source.fileName}\nExtracted Text:\n${source.rawText}\n` : ''}\nChained Memo & Verified Document Context:\n${contextStr}`;
+        const parts: Array<
+          | { inlineData: { mimeType: string; data: string } }
+          | { text: string }
+        > = source ? [...source.imageParts, { text: textPayload }] : [{ text: textPayload }];
+
+        const emittedKeys = new Set<string>();
+        let batchErr: string | null = null;
+        try {
+          const fullBuffer = await executeWithModelFallback(async (model) => {
+            const stream = await ai.models.generateContentStream({
+              model,
+              contents: { parts },
+              config: buildModelConfig(model, {
+                systemInstruction: SCRUTINY_SYSTEM_INSTRUCTION,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties,
+                  required: uncached,
+                },
+              }),
+            });
+            let acc = '';
+            for await (const chunk of stream) {
+              if (clientClosed) break;
+              const delta = chunk.text ?? '';
+              if (!delta) continue;
+              acc += delta;
+              const completed = extractCompletedTopLevelObjects(acc, emittedKeys);
+              for (const item of completed) {
+                const sec = item.key as StageScrutinySectionKey;
+                if (!uncached.includes(sec)) continue;
+                const cleanText = sanitizeAiMemoText(String(item.value.text ?? '').trim());
+                const reason = String(item.value.insufficientReason ?? '').trim();
+                const ev = {
+                  result: { text: cleanText, insufficientReason: reason },
+                  insufficient: Boolean(reason) || cleanText === '',
+                  insufficientReason: reason,
+                };
+                const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${sec}::${hashString(contextStr)}`;
+                storeSectionCache(cacheKey, ev);
+                writeEvent({
+                  type: 'section',
+                  section: sec,
+                  result: ev.result,
+                  insufficient: ev.insufficient,
+                  insufficientReason: ev.insufficientReason,
+                });
+              }
+            }
+            return acc;
+          }, () => clientClosed);
+
+          if (!clientClosed && fullBuffer.trim()) {
+            try {
+              const finalParsed = JSON.parse(fullBuffer) as Record<string, Record<string, unknown>>;
+              for (const sec of uncached) {
+                if (emittedKeys.has(sec)) continue;
+                const obj = finalParsed[sec];
+                if (obj && typeof obj === 'object') {
+                  emittedKeys.add(sec);
+                  const cleanText = sanitizeAiMemoText(String(obj.text ?? '').trim());
+                  const reason = String(obj.insufficientReason ?? '').trim();
+                  const ev = {
+                    result: { text: cleanText, insufficientReason: reason },
+                    insufficient: Boolean(reason) || cleanText === '',
+                    insufficientReason: reason,
+                  };
+                  const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${sec}::${hashString(contextStr)}`;
+                  storeSectionCache(cacheKey, ev);
+                  writeEvent({
+                    type: 'section',
+                    section: sec,
+                    result: ev.result,
+                    insufficient: ev.insufficient,
+                    insufficientReason: ev.insufficientReason,
+                  });
+                }
+              }
+            } catch {
+              // Handled below
+            }
+          }
+        } catch (err) {
+          batchErr = formatGeminiError(err, 'Failed to generate stage memo sections.');
+        }
+
+        const remaining = uncached.filter((s) => !emittedKeys.has(s));
+        for (const sec of remaining) {
+          if (clientClosed) break;
+          writeEvent({
+            type: 'error',
+            section: sec,
+            error: batchErr || 'Section did not finish generating — click Retry.',
+          });
+        }
+      }
+
+      if (!clientClosed) {
+        writeEvent({ type: 'done', sourceId: source?.sourceId });
+        res.end();
+      }
+    } catch (error) {
+      const message = formatGeminiError(error, 'Stage batch generation failed.');
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
+      } else if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'fatal', error: message })}\n\n`);
         res.end();
       }
     }

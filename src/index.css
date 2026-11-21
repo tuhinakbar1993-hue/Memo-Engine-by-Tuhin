@@ -41,10 +41,15 @@
 
 .ic-memo-sheet table {
   border-collapse: collapse;
+  table-layout: fixed;
   width: 100%;
+  font-variant-numeric: tabular-nums;
 }
 
 .ic-memo-sheet td,
 .ic-memo-sheet th {
-  vertical-align: top;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
+

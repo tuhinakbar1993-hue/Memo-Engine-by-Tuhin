@@ -1,9 +1,15 @@
 import { renderAsync } from 'docx-preview';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
-import type { MemoDocType, MemoTemplateRecord, ResolvedICMemo } from '../types/memo';
+import type {
+  MemoDocType,
+  MemoTemplateRecord,
+  ResolvedICMemo,
+  ResolvedStageMemo,
+} from '../types/memo';
 import { populateDocxTemplate } from './docxTemplateEngine';
 import { generateICMemoDocxBlob } from './icMemoDocx';
+import { generateStageMemoDocxBlob } from './stageMemoDocx';
 
 const PX_TO_PT = 72 / 96;
 const A4_RATIO = 841.92 / 595.32;
@@ -88,23 +94,28 @@ export async function renderDocxBlobToContainer(
 
 /**
  * Generates an editable .docx Blob using strict per-memo-type template isolation:
- * - IC Memo uses the uploaded IC template if supplied, otherwise the built-in IC engine.
- * - MEC, Board, and Sanction require their own uploaded default template and never substitute IC Memo.
+ * - If an uploaded template exists for `docType`, populates that exact uploaded template.
+ * - Otherwise uses the dedicated built-in engine for IC Memo or the stage engine for MEC/Board/Sanction.
  */
 export async function generateSynchronizedDocxBlob(
   docType: MemoDocType,
   memo: ResolvedICMemo,
-  activeTemplate: MemoTemplateRecord | null
+  activeTemplate: MemoTemplateRecord | null,
+  stageMemo?: ResolvedStageMemo | null
 ): Promise<Blob> {
-  if (docType !== 'ic' && !activeTemplate) {
-    throw new Error(
-      `No default .docx template is uploaded for ${docType.toUpperCase()} Memo. Upload its own .docx template before exporting.`
-    );
+  if (activeTemplate) {
+    return populateDocxTemplate(activeTemplate.bytes, memo, docType, stageMemo);
   }
 
-  return activeTemplate
-    ? populateDocxTemplate(activeTemplate.bytes, memo, docType)
-    : generateICMemoDocxBlob(memo);
+  if (docType === 'ic') {
+    return generateICMemoDocxBlob(memo);
+  }
+
+  if (!stageMemo) {
+    throw new Error(`Stage data missing for ${docType.toUpperCase()} export.`);
+  }
+
+  return generateStageMemoDocxBlob(stageMemo);
 }
 
 /**
@@ -249,8 +260,9 @@ export async function generatePdfFromDocxBlob(docxBlob: Blob): Promise<Blob> {
 export async function generateMemoPdfBlob(
   docType: MemoDocType,
   memo: ResolvedICMemo,
-  activeTemplate: MemoTemplateRecord | null
+  activeTemplate: MemoTemplateRecord | null,
+  stageMemo?: ResolvedStageMemo | null
 ): Promise<Blob> {
-  const docxBlob = await generateSynchronizedDocxBlob(docType, memo, activeTemplate);
+  const docxBlob = await generateSynchronizedDocxBlob(docType, memo, activeTemplate, stageMemo);
   return generatePdfFromDocxBlob(docxBlob);
 }

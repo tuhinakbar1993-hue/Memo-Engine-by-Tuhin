@@ -3,6 +3,7 @@ import type {
   MemoDocType,
   MemoTemplateRecord,
   ResolvedICMemo,
+  ResolvedStageMemo,
   TemplatePreviewBlock,
 } from '../types/memo';
 
@@ -302,7 +303,10 @@ function setParagraphValueAfterColon(
   return true;
 }
 
-export function buildTemplateTokenMap(memo: ResolvedICMemo): {
+export function buildTemplateTokenMap(
+  memo: ResolvedICMemo,
+  stageMemo?: ResolvedStageMemo | null
+): {
   requiredTokens: Record<string, string>;
   optionalTokens: Record<string, string>;
 } {
@@ -314,6 +318,9 @@ export function buildTemplateTokenMap(memo: ResolvedICMemo): {
   for (const [code, val] of Object.entries(ph)) {
     requiredTokens[code] = val && val.trim() !== '' ? val.trim() : code;
   }
+
+  const si = stageMemo?.stageInputs;
+  const ss = stageMemo?.stageSections;
 
   const semanticMap: Record<string, string> = {
     proposalDate: ph['#1#'] || '',
@@ -378,6 +385,8 @@ export function buildTemplateTokenMap(memo: ResolvedICMemo): {
     customerId: ph['#69#'] || '',
     sourceOfRepayment: memo.sourceOfRepayment || '',
     sec8SourceOfRepayment: memo.sourceOfRepayment || '',
+    clientPrayer: memo.clientPrayer || '',
+    contentsOfClientsPrayer: memo.clientPrayer || '',
     branchVisit: memo.branchVisitReport || '',
     branchVisitReport: memo.branchVisitReport || '',
     branchRecommendation: memo.sec13BranchRecommendation || '',
@@ -388,6 +397,27 @@ export function buildTemplateTokenMap(memo: ResolvedICMemo): {
     samd: memo.samdObservation || '',
     nonFundedNote: memo.sec2NonFundedNote || '',
     sec7OthersNote: memo.sec7OthersNote || '',
+    icMemoNumber: si?.icMemoNumber || '',
+    icMemoNo: si?.icMemoNumber || '',
+    icMemoDate: si?.icMemoDate || '',
+    mecMemoNumber: si?.mecMemoNumber || '',
+    mecMemoNo: si?.mecMemoNumber || '',
+    mecMemoDate: si?.mecMemoDate || '',
+    boardMemoNumber: si?.boardMemoNumber || '',
+    boardMemoNo: si?.boardMemoNumber || '',
+    boardMemoDate: si?.boardMemoDate || '',
+    sanctionRefNumber: si?.sanctionRefNumber || '',
+    sanctionNo: si?.sanctionRefNumber || '',
+    sanctionDate: si?.sanctionDate || '',
+    mecIcRecommendation: ss?.mecIcRecommendation || '',
+    mecExecutiveSummary: ss?.mecExecutiveSummary || '',
+    mecSamdRecommendation: ss?.mecSamdRecommendation || '',
+    boardMecRecommendation: ss?.boardMecRecommendation || '',
+    boardProposalRationale: ss?.boardProposalRationale || '',
+    boardResolutionTerms: ss?.boardResolutionTerms || '',
+    sanctionBoardAuthority: ss?.sanctionBoardAuthority || '',
+    sanctionCrossVerifiedSummary: ss?.sanctionCrossVerifiedSummary || '',
+    sanctionSpecialConditions: ss?.sanctionSpecialConditions || '',
   };
 
   const optionalTokens: Record<string, string> = {};
@@ -482,7 +512,7 @@ function isSectionBoundaryText(text: string): boolean {
   }
   if (/^(?:1[0-7]|[1-9])\s*[.)]\s*[A-Za-z]/.test(t)) return true;
   if (
-    /^(?:Nature\s+of\s+Business|Liability\s+Position\s+of|Liability\s+of\s+the\s+Client|CIB\s+Status|Legal\s+Action\s+Status|Audit,\s*Compliance|Security\s*:|Source\s+of\s+Repayment|Sequence\s+of\s+Head\s+Office|Brief\s+Particulars\s+of\s+The\s+Client|Financials\s+of\s+The\s+Client|Branch\s+Visit\s+Report|Recommendation\s+of\s+(?:the\s+)?Branch|Branch\s+Recommendation|Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)|Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?|Particulars\s+of\s+(?:the\s+)?(?:Proposed\s+)?Facility|Special\s+Term\(s\))/i.test(
+    /^(?:Nature\s+of\s+Business|Liability\s+Position\s+of|Liability\s+of\s+the\s+Client|CIB\s+Status|Legal\s+Action\s+Status|Audit,\s*Compliance|Security\s*:|Source\s+of\s+Repayment|Sequence\s+of\s+Head\s+Office|Brief\s+Particulars\s+of\s+The\s+Client|Financials\s+of\s+The\s+Client|Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer|Branch\s+Visit\s+Report|Recommendation\s+of\s+(?:the\s+)?(?:Investment\s+Committee|Management\s+Executive\s+Committee|Branch)|Executive\s+Appraisal\s*&\s*Waiver\s+Rationale|Board\s+Memorandum\s+Summary|Proposed\s+Board\s+Resolution|Board\s+Approval\s+Reference|AI\s+Cross-Verified\s+Facility|Operative\s+Terms,\s*Conditions|Branch\s+Recommendation|Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)|Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?|Particulars\s+of\s+(?:the\s+)?(?:Proposed\s+)?Facility|Special\s+Term\(s\))/i.test(
       t
     )
   ) {
@@ -761,6 +791,30 @@ function populateTableDataRowsPreservingFormat(
   }
 }
 
+function ensureTableFormattingPreserved(tbl: Element, xmlDoc: Document) {
+  let tblPr = directChildren(tbl, 'tblPr')[0] ?? null;
+  if (!tblPr) {
+    tblPr = xmlDoc.createElementNS(W_NS, 'w:tblPr');
+    tbl.insertBefore(tblPr, tbl.firstChild);
+  }
+  if (!directChildren(tblPr, 'tblLayout')[0]) {
+    const layout = xmlDoc.createElementNS(W_NS, 'w:tblLayout');
+    layout.setAttribute('w:type', 'fixed');
+    tblPr.appendChild(layout);
+  }
+  const trs = directChildren(tbl, 'tr');
+  for (const tr of trs) {
+    let trPr = directChildren(tr, 'trPr')[0] ?? null;
+    if (!trPr) {
+      trPr = xmlDoc.createElementNS(W_NS, 'w:trPr');
+      tr.insertBefore(trPr, tr.firstChild);
+    }
+    if (!directChildren(trPr, 'cantSplit')[0]) {
+      trPr.appendChild(xmlDoc.createElementNS(W_NS, 'w:cantSplit'));
+    }
+  }
+}
+
 /**
  * Structural & label-based population for uploaded .docx templates that do not use explicit #code# tokens
  * (or for mixed/untokenized sections and tables in a Bank Memo template).
@@ -769,7 +823,8 @@ function populateTableDataRowsPreservingFormat(
 function applyStructuralPopulations(
   xmlDoc: Document,
   memo: ResolvedICMemo,
-  replacedTokensMap: Map<Element, Set<string>>
+  replacedTokensMap: Map<Element, Set<string>>,
+  stageMemo?: ResolvedStageMemo | null
 ) {
   const ph = memo.placeholders;
   const bp = memo.branchProposal;
@@ -907,6 +962,22 @@ function applyStructuralPopulations(
       ])
     ) {
       populateNarrativeHeading(xmlDoc, pEl, memo.sourceOfRepayment, false);
+      continue;
+    }
+
+    // 12. Contents of the Client's Prayer:
+    if (
+      /^(?:12\s*[.)]\s*)?Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer\s*:?/i.test(normText) &&
+      nonEmpty(memo.clientPrayer) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, [
+        '#clientPrayer#',
+        '#contentsOfClientsPrayer#',
+        '{{clientPrayer}}',
+        '{{contentsOfClientsPrayer}}',
+        '[clientPrayer]',
+      ])
+    ) {
+      populateNarrativeHeading(xmlDoc, pEl, memo.clientPrayer, false);
       continue;
     }
 
@@ -1112,6 +1183,7 @@ function applyStructuralPopulations(
   // 2. Process all tables in document
   const tables = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'tbl'));
   for (const tbl of tables) {
+    ensureTableFormattingPreserved(tbl, xmlDoc);
     const trs = directChildren(tbl, 'tr');
     if (trs.length === 0) continue;
 
@@ -1125,13 +1197,34 @@ function applyStructuralPopulations(
 
     const tableText = matrix.flat().map((c) => c.text).join(' | ');
 
-    // A. Metadata Table (Dated / Memo no / To / From)
-    if (/\bDated\b/i.test(tableText) && /\bMemo\s*no\b/i.test(tableText)) {
+    // A. Metadata Table (Dated / Memo no / To / From + Stage Memo Numbers & Dates)
+    if (
+      (/\bDated\b/i.test(tableText) && /\bMemo\s*no\b/i.test(tableText)) ||
+      /\b(?:IC|MEC|Board)\s+Memo\s+(?:Number|No|Date)\b/i.test(tableText) ||
+      /\bSanction\s+(?:Ref|No|Date)\b/i.test(tableText)
+    ) {
+      const si = stageMemo?.stageInputs;
       for (const row of matrix) {
-        const label = row[0]?.text.trim() ?? '';
+        const label = row[0]?.text.replace(/\s*:\s*$/, '').trim() ?? '';
         const valCell = row[row.length - 1];
         if (!valCell || valCell.hasTokens) continue;
-        if (/^Dated$/i.test(label) && nonEmpty(ph['#1#'])) {
+        if (/^IC\s*Memo\s*(?:Number|No\.?)$/i.test(label) && nonEmpty(si?.icMemoNumber)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.icMemoNumber);
+        } else if (/^IC\s*Memo\s*Date$/i.test(label) && nonEmpty(si?.icMemoDate)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.icMemoDate);
+        } else if (/^MEC\s*Memo\s*(?:Number|No\.?)$/i.test(label) && nonEmpty(si?.mecMemoNumber)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.mecMemoNumber);
+        } else if (/^MEC\s*Memo\s*Date$/i.test(label) && nonEmpty(si?.mecMemoDate)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.mecMemoDate);
+        } else if (/^Board\s*Memo\s*(?:Number|No\.?)$/i.test(label) && nonEmpty(si?.boardMemoNumber)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.boardMemoNumber);
+        } else if (/^Board\s*Memo\s*Date$/i.test(label) && nonEmpty(si?.boardMemoDate)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.boardMemoDate);
+        } else if (/^Sanction\s*(?:Ref\.?\s*No\.?|Number)$/i.test(label) && nonEmpty(si?.sanctionRefNumber)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.sanctionRefNumber);
+        } else if (/^Sanction\s*Date$/i.test(label) && nonEmpty(si?.sanctionDate)) {
+          setCellTextPreservingFormat(xmlDoc, valCell.tc, si!.sanctionDate);
+        } else if (/^Dated$/i.test(label) && nonEmpty(ph['#1#'])) {
           setCellTextPreservingFormat(xmlDoc, valCell.tc, ph['#1#']);
         }
       }
@@ -1648,6 +1741,7 @@ function applyStructuralPopulations(
       else if (/^(Settlement\s*Amount|Exit\s*Amount)$/i.test(label)) trySet(nonEmpty(ph['#27#']));
       else if (/^(Settlement\s*Period|Settlement\s*Deadline)$/i.test(label)) trySet(nonEmpty(ph['#28#']));
       else if (/^(?:8\s*[.)]\s*)?Source\s+of\s+Repayment$/i.test(label)) trySet(nonEmpty(memo.sourceOfRepayment));
+      else if (/^(?:12\s*[.)]\s*)?Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer$/i.test(label)) trySet(nonEmpty(memo.clientPrayer));
       else if (/^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report$/i.test(label)) trySet(nonEmpty(memo.branchVisitReport));
       else if (/^(?:13\s*[.)]\s*)?Recommendation\s+of\s+(?:the\s+)?Branch$/i.test(label)) trySet(nonEmpty(memo.sec13BranchRecommendation));
       else if (/^(?:14\s*[.)]\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)/i.test(label)) {
@@ -1655,6 +1749,27 @@ function applyStructuralPopulations(
       } else if (/^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)$/i.test(label)) {
         trySet(nonEmpty(memo.samdObservation));
       } else if (/^Justification\s+of\s+(?:the\s+)?Proposed\s+Facility$/i.test(label)) trySet(nonEmpty(memo.justificationLines));
+      else if (stageMemo) {
+        const si = stageMemo.stageInputs;
+        const ss = stageMemo.stageSections;
+        if (/^IC\s*Memo\s*(?:Number|No\.?)$/i.test(label)) trySet(nonEmpty(si.icMemoNumber));
+        else if (/^IC\s*Memo\s*Date$/i.test(label)) trySet(nonEmpty(si.icMemoDate));
+        else if (/^MEC\s*Memo\s*(?:Number|No\.?)$/i.test(label)) trySet(nonEmpty(si.mecMemoNumber));
+        else if (/^MEC\s*Memo\s*Date$/i.test(label)) trySet(nonEmpty(si.mecMemoDate));
+        else if (/^Board\s*Memo\s*(?:Number|No\.?)$/i.test(label)) trySet(nonEmpty(si.boardMemoNumber));
+        else if (/^Board\s*Memo\s*Date$/i.test(label)) trySet(nonEmpty(si.boardMemoDate));
+        else if (/^Sanction\s*(?:Ref\.?\s*No\.?|Number)$/i.test(label)) trySet(nonEmpty(si.sanctionRefNumber));
+        else if (/^Sanction\s*Date$/i.test(label)) trySet(nonEmpty(si.sanctionDate));
+        else if (/Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i.test(label)) trySet(nonEmpty(ss.mecIcRecommendation));
+        else if (/Executive\s+Appraisal/i.test(label)) trySet(nonEmpty(ss.mecExecutiveSummary));
+        else if (/Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i.test(label)) trySet(nonEmpty(ss.mecSamdRecommendation));
+        else if (/Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i.test(label)) trySet(nonEmpty(ss.boardMecRecommendation));
+        else if (/Board\s+Memorandum\s+Summary/i.test(label)) trySet(nonEmpty(ss.boardProposalRationale));
+        else if (/Proposed\s+Board\s+Resolution/i.test(label)) trySet(nonEmpty(ss.boardResolutionTerms));
+        else if (/Board\s+Approval\s+Reference/i.test(label)) trySet(nonEmpty(ss.sanctionBoardAuthority));
+        else if (/AI\s+Cross-Verified\s+Facility/i.test(label)) trySet(nonEmpty(ss.sanctionCrossVerifiedSummary));
+        else if (/Operative\s+Terms/i.test(label)) trySet(nonEmpty(ss.sanctionSpecialConditions));
+      }
     }
   }
 
@@ -1702,6 +1817,11 @@ function applyStructuralPopulations(
     false
   );
   ensureHeadingValue(
+    memo.clientPrayer,
+    /^(?:12\s*[.)]\s*)?Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer\s*:?/i,
+    false
+  );
+  ensureHeadingValue(
     memo.branchVisitReport,
     /^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report\s*:?/i,
     false
@@ -1721,6 +1841,19 @@ function applyStructuralPopulations(
     /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
     true
   );
+
+  if (stageMemo) {
+    const ss = stageMemo.stageSections;
+    ensureHeadingValue(ss.mecIcRecommendation, /Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i, true);
+    ensureHeadingValue(ss.mecExecutiveSummary, /Executive\s+Appraisal\s*&\s*Waiver\s+Rationale/i, true);
+    ensureHeadingValue(ss.mecSamdRecommendation, /Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i, true);
+    ensureHeadingValue(ss.boardMecRecommendation, /Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i, true);
+    ensureHeadingValue(ss.boardProposalRationale, /Board\s+Memorandum\s+Summary/i, true);
+    ensureHeadingValue(ss.boardResolutionTerms, /Proposed\s+Board\s+Resolution/i, true);
+    ensureHeadingValue(ss.sanctionBoardAuthority, /Board\s+Approval\s+Reference/i, true);
+    ensureHeadingValue(ss.sanctionCrossVerifiedSummary, /AI\s+Cross-Verified\s+Facility/i, true);
+    ensureHeadingValue(ss.sanctionSpecialConditions, /Operative\s+Terms,\s*Conditions/i, true);
+  }
 }
 
 export async function inspectDocxTemplate(
@@ -1802,10 +1935,11 @@ export async function inspectDocxTemplate(
 export async function populateDocxTemplate(
   templateBytes: Uint8Array,
   memo: ResolvedICMemo,
-  _docType: MemoDocType
+  _docType: MemoDocType,
+  stageMemo?: ResolvedStageMemo | null
 ): Promise<Blob> {
   const zip = await JSZip.loadAsync(templateBytes);
-  const { requiredTokens, optionalTokens } = buildTemplateTokenMap(memo);
+  const { requiredTokens, optionalTokens } = buildTemplateTokenMap(memo, stageMemo);
   const allTokenMap: Record<string, string> = {
     ...optionalTokens,
     ...requiredTokens,
@@ -1838,7 +1972,7 @@ export async function populateDocxTemplate(
     }
 
     if (xp === 'word/document.xml') {
-      applyStructuralPopulations(xmlDoc, memo, replacedTokensMap);
+      applyStructuralPopulations(xmlDoc, memo, replacedTokensMap, stageMemo);
     }
 
     let serialized = serializer.serializeToString(xmlDoc);
@@ -1865,8 +1999,9 @@ function normalizeVerifyText(str: string): string {
 export async function verifyPopulatedDocxBlob(
   docxBlob: Blob,
   memo: ResolvedICMemo,
-  _docType: MemoDocType,
-  activeTemplate: MemoTemplateRecord | null
+  docType: MemoDocType,
+  activeTemplate: MemoTemplateRecord | null,
+  stageMemo?: ResolvedStageMemo | null
 ): Promise<{ verified: boolean; missingLabels: string[] }> {
   const zip = await JSZip.loadAsync(docxBlob);
   const parser = new DOMParser();
@@ -1957,6 +2092,12 @@ export async function verifyPopulatedDocxBlob(
     ['#sourceOfRepayment#', '#sec8SourceOfRepayment#', '{{sourceOfRepayment}}', '[sourceOfRepayment]']
   );
   checkNarrative(
+    "12. Contents of the Client's Prayer",
+    memo.clientPrayer,
+    /^(?:12\s*[.)]\s*)?Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer\s*:?/i,
+    ['#clientPrayer#', '#contentsOfClientsPrayer#', '{{clientPrayer}}', '{{contentsOfClientsPrayer}}', '[clientPrayer]']
+  );
+  checkNarrative(
     '12. Branch Visit Report',
     memo.branchVisitReport,
     /^(?:12\s*[.)]\s*)?Branch\s+Visit\s+Report\s*:?/i,
@@ -1980,6 +2121,105 @@ export async function verifyPopulatedDocxBlob(
     /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
     ['#samdObservation#', '#samd#', '{{samdObservation}}']
   );
+
+  if (docType !== 'ic' && stageMemo) {
+    const si = stageMemo.stageInputs;
+    const ss = stageMemo.stageSections;
+    if (docType === 'mec') {
+      checkNarrative(
+        'IC Memo Number',
+        si.icMemoNumber,
+        /IC\s*Memo\s*(?:Number|No)/i,
+        ['#icMemoNumber#', '{{icMemoNumber}}', '#icMemoNo#']
+      );
+      checkNarrative(
+        'IC Memo Date',
+        si.icMemoDate,
+        /IC\s*Memo\s*Date/i,
+        ['#icMemoDate#', '{{icMemoDate}}']
+      );
+      checkNarrative(
+        'Recommendation of the Investment Committee (IC)',
+        ss.mecIcRecommendation,
+        /Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i,
+        ['#mecIcRecommendation#', '{{mecIcRecommendation}}']
+      );
+      checkNarrative(
+        'Executive Appraisal & Waiver Rationale for MEC',
+        ss.mecExecutiveSummary,
+        /Executive\s+Appraisal\s*&\s*Waiver\s+Rationale/i,
+        ['#mecExecutiveSummary#', '{{mecExecutiveSummary}}']
+      );
+      checkNarrative(
+        'Observation and Recommendation of SAMD for MEC',
+        ss.mecSamdRecommendation,
+        /Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i,
+        ['#mecSamdRecommendation#', '{{mecSamdRecommendation}}']
+      );
+    } else if (docType === 'board') {
+      checkNarrative(
+        'MEC Memo Number',
+        si.mecMemoNumber,
+        /MEC\s*Memo\s*(?:Number|No)/i,
+        ['#mecMemoNumber#', '{{mecMemoNumber}}', '#mecMemoNo#']
+      );
+      checkNarrative(
+        'MEC Memo Date',
+        si.mecMemoDate,
+        /MEC\s*Memo\s*Date/i,
+        ['#mecMemoDate#', '{{mecMemoDate}}']
+      );
+      checkNarrative(
+        'Recommendation of the Management Executive Committee (MEC)',
+        ss.boardMecRecommendation,
+        /Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i,
+        ['#boardMecRecommendation#', '{{boardMecRecommendation}}']
+      );
+      checkNarrative(
+        'Board Memorandum Summary & Financial Justification',
+        ss.boardProposalRationale,
+        /Board\s+Memorandum\s+Summary/i,
+        ['#boardProposalRationale#', '{{boardProposalRationale}}']
+      );
+      checkNarrative(
+        'Proposed Board Resolution & Approval Terms',
+        ss.boardResolutionTerms,
+        /Proposed\s+Board\s+Resolution/i,
+        ['#boardResolutionTerms#', '{{boardResolutionTerms}}']
+      );
+    } else if (docType === 'sanction') {
+      checkNarrative(
+        'Board Memo Number',
+        si.boardMemoNumber,
+        /Board\s*Memo\s*(?:Number|No)/i,
+        ['#boardMemoNumber#', '{{boardMemoNumber}}', '#boardMemoNo#']
+      );
+      checkNarrative(
+        'Board Memo Date',
+        si.boardMemoDate,
+        /Board\s*Memo\s*Date/i,
+        ['#boardMemoDate#', '{{boardMemoDate}}']
+      );
+      checkNarrative(
+        'Board Approval Reference & Sanction Basis',
+        ss.sanctionBoardAuthority,
+        /Board\s+Approval\s+Reference/i,
+        ['#sanctionBoardAuthority#', '{{sanctionBoardAuthority}}']
+      );
+      checkNarrative(
+        'AI Cross-Verified Facility & Liability Confirmation',
+        ss.sanctionCrossVerifiedSummary,
+        /AI\s+Cross-Verified\s+Facility/i,
+        ['#sanctionCrossVerifiedSummary#', '{{sanctionCrossVerifiedSummary}}']
+      );
+      checkNarrative(
+        'Operative Terms, Conditions & Redemption Covenants',
+        ss.sanctionSpecialConditions,
+        /Operative\s+Terms,\s*Conditions/i,
+        ['#sanctionSpecialConditions#', '{{sanctionSpecialConditions}}']
+      );
+    }
+  }
 
   if (checkBuiltIn) {
     for (const [code, lbl] of [
@@ -2019,9 +2259,10 @@ function applyPreviewReplacements(text: string, tokenMap: Record<string, string>
  */
 export function renderTemplatePreviewBlocks(
   template: MemoTemplateRecord,
-  memo: ResolvedICMemo
+  memo: ResolvedICMemo,
+  stageMemo?: ResolvedStageMemo | null
 ): TemplatePreviewBlock[] {
-  const { requiredTokens, optionalTokens } = buildTemplateTokenMap(memo);
+  const { requiredTokens, optionalTokens } = buildTemplateTokenMap(memo, stageMemo);
   const allTokenMap = { ...optionalTokens, ...requiredTokens };
   const ph = memo.placeholders;
 
@@ -2032,6 +2273,8 @@ export function renderTemplatePreviewBlocks(
         text = `1. Nature of Business: ${ph['#54#']}`;
       } else if (/^(?:8\.\s*)?Source of Repayment\s*:/i.test(text) && nonEmpty(memo.sourceOfRepayment)) {
         text = `8. Source of Repayment: ${memo.sourceOfRepayment}`;
+      } else if (/^(?:12\.\s*)?Contents of (?:the )?Client[’']?s Prayer\s*:/i.test(text) && nonEmpty(memo.clientPrayer)) {
+        text = `12. Contents of the Client’s Prayer: ${memo.clientPrayer}`;
       } else if (/^(?:12\.\s*)?Branch Visit Report\s*:/i.test(text) && nonEmpty(memo.branchVisitReport)) {
         text = `12. Branch Visit Report: ${memo.branchVisitReport}`;
       } else if (/^(?:13\.\s*)?Recommendation of (?:the )?Branch\s*:/i.test(text) && nonEmpty(memo.sec13BranchRecommendation)) {

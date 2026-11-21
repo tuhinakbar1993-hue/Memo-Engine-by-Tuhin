@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, RefreshCw } from 'lucide-react';
-import { ComingSoonMemoTab } from './components/ComingSoonMemoTab';
 import { ICMemoPreview } from './components/ICMemoPreview';
 import { LandingScreen } from './components/LandingScreen';
 import { ManualInputsTab } from './components/ManualInputsTab';
-import { resolveICMemo } from './engines/icMemoEngine';
-import { MEMO_ENGINES } from './engines/memoRegistry';
+import { StageMemoTab } from './components/StageMemoTab';
+import {
+  INITIAL_STAGE_AI_SECTIONS,
+  INITIAL_STAGE_INPUTS,
+  resolveICMemo,
+  resolveStageMemo,
+  STAGE_SECTIONS_BY_DOC,
+} from './engines/icMemoEngine';
 import { inspectDocxTemplate, verifyPopulatedDocxBlob } from './exporters/docxTemplateEngine';
 import { generatePdfFromDocxBlob, generateSynchronizedDocxBlob } from './exporters/pdfExporter';
 import {
@@ -33,6 +38,11 @@ import type {
   MemoTabKey,
   MemoTemplateRecord,
   ScrutinySectionKey,
+  StageAiSectionsData,
+  StageBatchScrutinyState,
+  StageMemoDocType,
+  StageMemoInputs,
+  StageScrutinySectionKey,
 } from './types/memo';
 import { loadCentralCaseState, saveCentralCaseState } from './utils/caseStorage';
 import {
@@ -147,6 +157,7 @@ const INITIAL_AI_SECTIONS: AiSectionsData = {
   sec9HoSanctions: null,
   sec10ClientParticulars: null,
   sec11Financials: null,
+  clientPrayer: null,
   branchVisit: null,
   sec13BranchRecommendation: null,
   sec14IccdRecommendation: null,
@@ -183,6 +194,7 @@ const ALL_SCRUTINY_SECTIONS: ScrutinySectionKey[] = [
   'sec9HoSanctions',
   'sec10ClientParticulars',
   'sec11Financials',
+  'clientPrayer',
   'branchVisit',
   'sec13BranchRecommendation',
   'sec14IccdRecommendation',
@@ -191,6 +203,18 @@ const ALL_SCRUTINY_SECTIONS: ScrutinySectionKey[] = [
 
 const INITIAL_BATCH_SCRUTINY: BatchScrutinyState = {
   running: false,
+  total: 0,
+  targetSections: [],
+  completedSections: [],
+  retryingSections: [],
+  failedSections: [],
+  insufficientSections: [],
+  skippedManualSections: [],
+};
+
+const INITIAL_STAGE_BATCH_SCRUTINY: StageBatchScrutinyState = {
+  running: false,
+  docType: null,
   total: 0,
   targetSections: [],
   completedSections: [],
@@ -236,12 +260,25 @@ export default function App() {
   const [manualEditedSections, setManualEditedSections] = useState<
     Partial<Record<ScrutinySectionKey, boolean>>
   >({});
+  const [stageInputs, setStageInputs] = useState<StageMemoInputs>(INITIAL_STAGE_INPUTS);
+  const [stageAiSections, setStageAiSections] = useState<StageAiSectionsData>(
+    INITIAL_STAGE_AI_SECTIONS
+  );
+  const [stageManualEditedSections, setStageManualEditedSections] = useState<
+    Partial<Record<StageScrutinySectionKey, boolean>>
+  >({});
+  const [scrutinizingStageSection, setScrutinizingStageSection] =
+    useState<StageScrutinySectionKey | null>(null);
+  const [stageBatchScrutiny, setStageBatchScrutiny] = useState<StageBatchScrutinyState>(
+    INITIAL_STAGE_BATCH_SCRUTINY
+  );
   const [aiError, setAiError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const serverCachedSourceIdRef = useRef<string | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
+  const stageBatchAbortRef = useRef<AbortController | null>(null);
   const caseDirtyRef = useRef(false);
   const persistTimerRef = useRef<number | null>(null);
 
@@ -251,12 +288,18 @@ export default function App() {
     aiSections: AiSectionsData;
     overrides: Record<string, string>;
     manualEditedSections: Partial<Record<ScrutinySectionKey, boolean>>;
+    stageInputs: StageMemoInputs;
+    stageAiSections: StageAiSectionsData;
+    stageManualEditedSections: Partial<Record<StageScrutinySectionKey, boolean>>;
   }>({
     extractedDocs: INITIAL_EXTRACTED_DOCS,
     manualInputs: INITIAL_MANUAL_INPUTS,
     aiSections: INITIAL_AI_SECTIONS,
     overrides: {},
     manualEditedSections: {},
+    stageInputs: INITIAL_STAGE_INPUTS,
+    stageAiSections: INITIAL_STAGE_AI_SECTIONS,
+    stageManualEditedSections: {},
   });
   const docMetasRef = useRef<Record<DocumentKey, DocumentUploadMeta>>(INITIAL_DOC_METAS);
 
@@ -272,10 +315,27 @@ export default function App() {
     [extractedDocs, manualInputs, aiSections, overrides, manualEditedSections]
   );
 
+  const resolvedMecMemo = useMemo(
+    () => resolveStageMemo('mec', resolvedICMemo, stageInputs, stageAiSections),
+    [resolvedICMemo, stageInputs, stageAiSections]
+  );
+
+  const resolvedBoardMemo = useMemo(
+    () => resolveStageMemo('board', resolvedICMemo, stageInputs, stageAiSections),
+    [resolvedICMemo, stageInputs, stageAiSections]
+  );
+
+  const resolvedSanctionMemo = useMemo(
+    () => resolveStageMemo('sanction', resolvedICMemo, stageInputs, stageAiSections),
+    [resolvedICMemo, stageInputs, stageAiSections]
+  );
+
   const [appliedSnapshot, setAppliedSnapshot] = useState<AppliedSyncState>(() => ({
     appliedAt: null,
     version: 0,
     memo: resolveICMemo(INITIAL_EXTRACTED_DOCS, INITIAL_MANUAL_INPUTS, INITIAL_AI_SECTIONS, {}, {}),
+    stageInputs: INITIAL_STAGE_INPUTS,
+    stageAiSections: INITIAL_STAGE_AI_SECTIONS,
   }));
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const [applySignal, setApplySignal] = useState(0);
@@ -288,8 +348,20 @@ export default function App() {
       aiSections,
       overrides,
       manualEditedSections,
+      stageInputs,
+      stageAiSections,
+      stageManualEditedSections,
     };
-  }, [extractedDocs, manualInputs, aiSections, overrides, manualEditedSections]);
+  }, [
+    extractedDocs,
+    manualInputs,
+    aiSections,
+    overrides,
+    manualEditedSections,
+    stageInputs,
+    stageAiSections,
+    stageManualEditedSections,
+  ]);
 
   useEffect(() => {
     docMetasRef.current = docMetas;
@@ -328,6 +400,8 @@ export default function App() {
       appliedAt: nowStr,
       version: prev.version + 1,
       memo: syncedMemo,
+      stageInputs: latest.stageInputs,
+      stageAiSections: latest.stageAiSections,
     }));
     setHasPendingChanges(false);
     return syncedMemo;
@@ -395,6 +469,38 @@ export default function App() {
     setManualEditedSections(next);
   };
 
+  const setStageInputsSync = (
+    updater: StageMemoInputs | ((prev: StageMemoInputs) => StageMemoInputs)
+  ) => {
+    caseDirtyRef.current = true;
+    const next = typeof updater === 'function' ? updater(caseRef.current.stageInputs) : updater;
+    caseRef.current = { ...caseRef.current, stageInputs: next };
+    setStageInputs(next);
+  };
+
+  const setStageAiSectionsSync = (
+    updater: StageAiSectionsData | ((prev: StageAiSectionsData) => StageAiSectionsData)
+  ) => {
+    caseDirtyRef.current = true;
+    const next = typeof updater === 'function' ? updater(caseRef.current.stageAiSections) : updater;
+    caseRef.current = { ...caseRef.current, stageAiSections: next };
+    setStageAiSections(next);
+  };
+
+  const setStageManualEditedSectionsSync = (
+    updater:
+      | Partial<Record<StageScrutinySectionKey, boolean>>
+      | ((
+          prev: Partial<Record<StageScrutinySectionKey, boolean>>
+        ) => Partial<Record<StageScrutinySectionKey, boolean>>)
+  ) => {
+    caseDirtyRef.current = true;
+    const next =
+      typeof updater === 'function' ? updater(caseRef.current.stageManualEditedSections) : updater;
+    caseRef.current = { ...caseRef.current, stageManualEditedSections: next };
+    setStageManualEditedSections(next);
+  };
+
   useEffect(() => {
     void loadAllTemplateRecords().then((loaded) => {
       setTemplates(loaded);
@@ -407,6 +513,9 @@ export default function App() {
         aiSections: { ...INITIAL_AI_SECTIONS, ...(saved.aiSections || {}) },
         overrides: saved.overrides || {},
         manualEditedSections: saved.manualEditedSections || {},
+        stageInputs: { ...INITIAL_STAGE_INPUTS, ...(saved.stageInputs || {}) },
+        stageAiSections: { ...INITIAL_STAGE_AI_SECTIONS, ...(saved.stageAiSections || {}) },
+        stageManualEditedSections: saved.stageManualEditedSections || {},
       };
       caseRef.current = hydrated;
       setExtractedDocs(hydrated.extractedDocs);
@@ -414,6 +523,9 @@ export default function App() {
       setAiSections(hydrated.aiSections);
       setOverrides(hydrated.overrides);
       setManualEditedSections(hydrated.manualEditedSections);
+      setStageInputs(hydrated.stageInputs);
+      setStageAiSections(hydrated.stageAiSections);
+      setStageManualEditedSections(hydrated.stageManualEditedSections);
 
       if (saved.docUploadedFlags) {
         setDocMetasSync((prev) => {
@@ -449,6 +561,8 @@ export default function App() {
           : null,
         version: 1,
         memo: hydratedMemo,
+        stageInputs: hydrated.stageInputs,
+        stageAiSections: hydrated.stageAiSections,
       });
       setHasPendingChanges(false);
     });
@@ -714,10 +828,12 @@ export default function App() {
     return {
       placeholders: latestMemo.placeholders,
       sourceOfRepayment: latestMemo.sourceOfRepayment,
+      clientPrayer: latestMemo.clientPrayer,
       branchVisitReport: latestMemo.branchVisitReport,
       justificationLines: latestMemo.justificationLines,
       sec13BranchRecommendation: latestMemo.sec13BranchRecommendation,
       sec14IccdRecommendation: latestMemo.sec14IccdRecommendation,
+      samdObservation: latestMemo.samdObservation,
       extractedSummaries: {
         outstanding: latest.extractedDocs.outstanding,
         partyPerformance: latest.extractedDocs.partyPerformance,
@@ -727,6 +843,8 @@ export default function App() {
         costOfFund: latest.extractedDocs.costOfFund,
       },
       branchProposal: latest.extractedDocs.branchProposal,
+      stageInputs: latest.stageInputs,
+      stageSections: latest.stageAiSections,
     };
   };
 
@@ -738,6 +856,7 @@ export default function App() {
       section === 'justification' ||
       section === 'sec1NatureOfBusiness' ||
       section === 'sec8SourceOfRepayment' ||
+      section === 'clientPrayer' ||
       section === 'branchVisit' ||
       section === 'sec13BranchRecommendation' ||
       section === 'sec14IccdRecommendation' ||
@@ -1156,6 +1275,372 @@ export default function App() {
     void persistCentralCaseNow(false);
   };
 
+  const handleStageInputChange = (field: keyof StageMemoInputs, value: string) => {
+    setStageInputsSync((prev) => ({ ...prev, [field]: value }));
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(false);
+  };
+
+  const handleUpdateStageAiSection = (
+    section: StageScrutinySectionKey,
+    value: string,
+    markManual = true
+  ) => {
+    setStageAiSectionsSync((prev) => ({ ...prev, [section]: value }));
+    if (markManual) {
+      setStageManualEditedSectionsSync((prev) => ({ ...prev, [section]: true }));
+    }
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(false);
+  };
+
+  const fetchStageEndpoint = async (
+    url: string,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<Response> => {
+    if (branchProposalFile) {
+      const source = await prepareBranchProposalSource(branchProposalFile);
+      return fetchWithSourceCache(url, payload, source, signal);
+    }
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify(payload),
+    });
+  };
+
+  const handleScrutinizeStageSection = async (
+    docType: StageMemoDocType,
+    section: StageScrutinySectionKey,
+    forceOverwrite = false
+  ) => {
+    if (stageBatchScrutiny.running) return;
+    if (!branchProposalFile && !caseRef.current.extractedDocs.branchProposal && !resolvedICMemo.placeholders['#2#']) {
+      setAiError(
+        'Upload the Branch Proposal and supporting documents on the Manual Inputs tab first so AI can scrutinize and populate this stage.'
+      );
+      return;
+    }
+    if (stageManualEditedSections[section] && !forceOverwrite) {
+      return;
+    }
+
+    setScrutinizingStageSection(section);
+    setAiError(null);
+
+    try {
+      const context = buildScrutinyContext();
+      const response = await fetchStageEndpoint('/api/gemini/scrutinize-stage-section', {
+        docType,
+        section,
+        context,
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.error || `Stage AI scrutiny failed (${response.status}).`);
+      }
+
+      const data = (await response.json()) as {
+        result?: { text?: string };
+        insufficient?: boolean;
+        insufficientReason?: string | null;
+        sourceId?: string;
+      };
+      if (data.sourceId) {
+        serverCachedSourceIdRef.current = data.sourceId;
+      }
+
+      const text = String(data.result?.text ?? '').trim();
+      setStageAiSectionsSync((prev) => ({ ...prev, [section]: text }));
+      setStageManualEditedSectionsSync((prev) => ({ ...prev, [section]: false }));
+      syncAppliedSnapshotFromRef();
+      void persistCentralCaseNow(true);
+
+      const isInsufficient = Boolean(data.insufficient);
+      const reason =
+        data.insufficientReason?.trim() ||
+        'Some reference details were incomplete in the current case documents.';
+      setStageBatchScrutiny((prev) => {
+        if (prev.docType !== docType && prev.total === 0) return prev;
+        return {
+          ...prev,
+          docType,
+          failedSections: prev.failedSections.filter((f) => f.section !== section),
+          completedSections: prev.completedSections.includes(section)
+            ? prev.completedSections
+            : [...prev.completedSections, section],
+          insufficientSections: isInsufficient
+            ? [
+                ...prev.insufficientSections.filter((item) => item.section !== section),
+                { section, reason },
+              ]
+            : prev.insufficientSections.filter((item) => item.section !== section),
+        };
+      });
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Failed to scrutinize stage section.');
+    } finally {
+      setScrutinizingStageSection(null);
+    }
+  };
+
+  const handleRetryStageSection = async (
+    docType: StageMemoDocType,
+    section: StageScrutinySectionKey
+  ) => {
+    if (stageBatchScrutiny.running) return;
+    if (stageBatchScrutiny.retryingSections.includes(section)) return;
+
+    setAiError(null);
+    setStageBatchScrutiny((prev) => ({
+      ...prev,
+      docType,
+      retryingSections: prev.retryingSections.includes(section)
+        ? prev.retryingSections
+        : [...prev.retryingSections, section],
+    }));
+
+    try {
+      const context = buildScrutinyContext();
+      const response = await fetchStageEndpoint('/api/gemini/scrutinize-stage-section', {
+        docType,
+        section,
+        context,
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.error || `Retry failed (${response.status}).`);
+      }
+
+      const data = (await response.json()) as {
+        result?: { text?: string };
+        insufficient?: boolean;
+        insufficientReason?: string | null;
+        sourceId?: string;
+      };
+      if (data.sourceId) {
+        serverCachedSourceIdRef.current = data.sourceId;
+      }
+
+      const text = String(data.result?.text ?? '').trim();
+      setStageAiSectionsSync((prev) => ({ ...prev, [section]: text }));
+      setStageManualEditedSectionsSync((prev) => ({ ...prev, [section]: false }));
+      syncAppliedSnapshotFromRef();
+      void persistCentralCaseNow(true);
+
+      const isInsufficient = Boolean(data.insufficient);
+      const reason =
+        data.insufficientReason?.trim() ||
+        'Some reference details were incomplete in the current case documents.';
+
+      setStageBatchScrutiny((prev) => ({
+        ...prev,
+        docType,
+        failedSections: prev.failedSections.filter((f) => f.section !== section),
+        completedSections: prev.completedSections.includes(section)
+          ? prev.completedSections
+          : [...prev.completedSections, section],
+        insufficientSections: isInsufficient
+          ? [
+              ...prev.insufficientSections.filter((item) => item.section !== section),
+              { section, reason },
+            ]
+          : prev.insufficientSections.filter((item) => item.section !== section),
+      }));
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Retry failed for this section.';
+      setStageBatchScrutiny((prev) => ({
+        ...prev,
+        docType,
+        completedSections: prev.completedSections.filter((s) => s !== section),
+        failedSections: [
+          ...prev.failedSections.filter((f) => f.section !== section),
+          { section, error: errMsg },
+        ],
+      }));
+    } finally {
+      setStageBatchScrutiny((prev) => ({
+        ...prev,
+        retryingSections: prev.retryingSections.filter((s) => s !== section),
+      }));
+    }
+  };
+
+  const handleScrutinizeStageAll = async (docType: StageMemoDocType) => {
+    if (stageBatchScrutiny.running || scrutinizingStageSection !== null) return;
+    if (!branchProposalFile && !caseRef.current.extractedDocs.branchProposal && !resolvedICMemo.placeholders['#2#']) {
+      setAiError(
+        'Upload the Branch Proposal and supporting documents on the Manual Inputs tab first so AI can scrutinize and populate this stage.'
+      );
+      return;
+    }
+
+    stageBatchAbortRef.current?.abort();
+    const controller = new AbortController();
+    stageBatchAbortRef.current = controller;
+    setAiError(null);
+
+    const allStageKeys = STAGE_SECTIONS_BY_DOC[docType];
+    const skippedManualSections: StageScrutinySectionKey[] = [];
+    const targetSections: StageScrutinySectionKey[] = [];
+    for (const s of allStageKeys) {
+      if (stageManualEditedSections[s]) {
+        skippedManualSections.push(s);
+      } else {
+        targetSections.push(s);
+      }
+    }
+
+    if (targetSections.length === 0) {
+      setStageBatchScrutiny({
+        running: false,
+        docType,
+        total: allStageKeys.length,
+        targetSections: [],
+        completedSections: [],
+        retryingSections: [],
+        failedSections: [],
+        insufficientSections: [],
+        skippedManualSections,
+      });
+      return;
+    }
+
+    setStageBatchScrutiny({
+      running: true,
+      docType,
+      total: targetSections.length,
+      targetSections,
+      completedSections: [],
+      retryingSections: [],
+      failedSections: [],
+      insufficientSections: [],
+      skippedManualSections,
+    });
+
+    try {
+      const context = buildScrutinyContext();
+      const response = await fetchStageEndpoint(
+        '/api/gemini/scrutinize-stage-all',
+        { docType, sections: targetSections, context },
+        controller.signal
+      );
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.error || `Stage batch scrutiny failed (${response.status}).`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Streaming response body unavailable from server.');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? '';
+
+        for (const frame of frames) {
+          const dataLines = frame
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart());
+          if (dataLines.length === 0) continue;
+
+          try {
+            const event = JSON.parse(dataLines.join('\n')) as {
+              type: 'section' | 'error' | 'fatal' | 'done';
+              section?: StageScrutinySectionKey;
+              result?: { text?: string };
+              insufficient?: boolean;
+              insufficientReason?: string | null;
+              error?: string;
+              sourceId?: string;
+            };
+
+            if (event.type === 'section' && event.section && event.result) {
+              const sec = event.section;
+              const text = String(event.result.text ?? '').trim();
+              setStageAiSectionsSync((prev) => ({ ...prev, [sec]: text }));
+              setStageManualEditedSectionsSync((prev) => ({ ...prev, [sec]: false }));
+              syncAppliedSnapshotFromRef();
+              void persistCentralCaseNow(true);
+
+              const isInsufficient = Boolean(event.insufficient);
+              const reason =
+                event.insufficientReason?.trim() ||
+                'Some reference details were incomplete in the current case documents.';
+              setStageBatchScrutiny((prev) => ({
+                ...prev,
+                completedSections: prev.completedSections.includes(sec)
+                  ? prev.completedSections
+                  : [...prev.completedSections, sec],
+                failedSections: prev.failedSections.filter((f) => f.section !== sec),
+                insufficientSections: isInsufficient
+                  ? [
+                      ...prev.insufficientSections.filter((item) => item.section !== sec),
+                      { section: sec, reason },
+                    ]
+                  : prev.insufficientSections.filter((item) => item.section !== sec),
+              }));
+            } else if (event.type === 'error' && event.section) {
+              const sec = event.section;
+              const errMsg = event.error || 'Failed to generate section.';
+              setStageBatchScrutiny((prev) => ({
+                ...prev,
+                failedSections: [
+                  ...prev.failedSections.filter((f) => f.section !== sec),
+                  { section: sec, error: errMsg },
+                ],
+              }));
+            } else if (event.type === 'fatal') {
+              setAiError(event.error || 'Stage batch AI scrutiny failed.');
+            } else if (event.type === 'done' && event.sourceId) {
+              serverCachedSourceIdRef.current = event.sourceId;
+            }
+          } catch {
+            // Ignore malformed SSE chunk
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as { name?: string })?.name !== 'AbortError') {
+        setAiError(err instanceof Error ? err.message : 'Stage batch AI scrutiny failed.');
+      }
+    } finally {
+      setStageBatchScrutiny((prev) => {
+        const completedSet = new Set(prev.completedSections);
+        const failedSet = new Set(prev.failedSections.map((f) => f.section));
+        const uncompleted = prev.targetSections.filter(
+          (sec) => !completedSet.has(sec) && !failedSet.has(sec)
+        );
+        const extraFailures = uncompleted.map((sec) => ({
+          section: sec,
+          error: 'Section did not finish generating — click Retry to scrutinize this section.',
+        }));
+        return {
+          ...prev,
+          running: false,
+          failedSections: [...prev.failedSections, ...extraFailures],
+        };
+      });
+      if (stageBatchAbortRef.current === controller) {
+        stageBatchAbortRef.current = null;
+      }
+    }
+  };
+
   const handleUploadTemplate = async (docType: MemoDocType, file: File) => {
     const record = await inspectDocxTemplate(file, docType);
     setTemplates((prev) => ({ ...prev, [docType]: record }));
@@ -1196,23 +1681,29 @@ export default function App() {
 
   const prepareVerifiedSynchronizedExport = async (docType: MemoDocType) => {
     const activeTemplate = templates[docType];
-    if (docType !== 'ic' && !activeTemplate) {
-      throw new Error(
-        `No default .docx template is uploaded for ${docType.toUpperCase()} Memo. Upload its own .docx template before exporting.`
-      );
-    }
 
     // Flush any queued microtask/state updates and persist central case data immediately
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     await persistCentralCaseNow(true);
     const syncedMemo = syncAppliedSnapshotFromRef();
+    const latest = caseRef.current;
+    const syncedStageMemo =
+      docType === 'ic'
+        ? null
+        : resolveStageMemo(docType, syncedMemo, latest.stageInputs, latest.stageAiSections);
 
-    const docxBlob = await generateSynchronizedDocxBlob(docType, syncedMemo, activeTemplate);
+    const docxBlob = await generateSynchronizedDocxBlob(
+      docType,
+      syncedMemo,
+      activeTemplate,
+      syncedStageMemo
+    );
     const verification = await verifyPopulatedDocxBlob(
       docxBlob,
       syncedMemo,
       docType,
-      activeTemplate
+      activeTemplate,
+      syncedStageMemo
     );
     if (!verification.verified) {
       throw new Error(
@@ -1255,10 +1746,6 @@ export default function App() {
   if (!entered) {
     return <LandingScreen onEnter={() => setEntered(true)} />;
   }
-
-  const mecEngine = MEMO_ENGINES.find((e) => e.id === 'mec')!;
-  const boardEngine = MEMO_ENGINES.find((e) => e.id === 'board')!;
-  const sanctionEngine = MEMO_ENGINES.find((e) => e.id === 'sanction')!;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
@@ -1313,8 +1800,7 @@ export default function App() {
               <span>Apply All Changes</span>
             </button>
 
-            {activeTab === 'ic' ||
-            (activeTab !== 'manual' && templates[activeTab as MemoDocType] !== null) ? (
+            {activeTab !== 'manual' ? (
               <>
                 <button
                   type="button"
@@ -1428,62 +1914,110 @@ export default function App() {
         )}
 
         {activeTab === 'mec' && (
-          <ComingSoonMemoTab
-            engine={mecEngine}
-            accountNo={resolvedICMemo.placeholders['#2#']}
-            branchName={resolvedICMemo.placeholders['#3#']}
-            proposalDate={resolvedICMemo.placeholders['#1#']}
-            memo={resolvedICMemo}
+          <StageMemoTab
+            docType="mec"
+            stageMemo={resolvedMecMemo}
+            stageInputs={stageInputs}
+            stageAiSections={stageAiSections}
+            stageManualEditedSections={stageManualEditedSections}
+            scrutinizingStageSection={scrutinizingStageSection}
+            stageBatchScrutiny={stageBatchScrutiny}
+            hasBranchProposalFile={branchProposalFile !== null}
+            hasAnyCaseData={Boolean(
+              resolvedICMemo.placeholders['#2#'] || resolvedICMemo.branchProposal
+            )}
+            aiError={aiError}
+            onStageInputChange={handleStageInputChange}
+            onUpdateStageAiSection={handleUpdateStageAiSection}
+            onScrutinizeStageSection={handleScrutinizeStageSection}
+            onRetryStageSection={handleRetryStageSection}
+            onScrutinizeStageAll={handleScrutinizeStageAll}
+            onDismissStageBatchSummary={() =>
+              setStageBatchScrutiny(INITIAL_STAGE_BATCH_SCRUTINY)
+            }
             templates={templates}
             onUploadTemplate={handleUploadTemplate}
             onRemoveTemplate={handleRemoveTemplate}
-            onDownloadDocx={handleDownloadDocx}
-            onDownloadPdf={handleDownloadPdf}
+            onDownloadDocx={() => handleDownloadDocx('mec')}
+            onDownloadPdf={() => handleDownloadPdf('mec')}
             downloading={downloading}
             downloadingPdf={downloadingPdf}
             onApplyAllChanges={handleApplyAllChanges}
             hasPendingChanges={hasPendingChanges}
             lastAppliedAt={appliedSnapshot.appliedAt}
+            applySignal={applySignal}
           />
         )}
 
         {activeTab === 'board' && (
-          <ComingSoonMemoTab
-            engine={boardEngine}
-            accountNo={resolvedICMemo.placeholders['#2#']}
-            branchName={resolvedICMemo.placeholders['#3#']}
-            proposalDate={resolvedICMemo.placeholders['#1#']}
-            memo={resolvedICMemo}
+          <StageMemoTab
+            docType="board"
+            stageMemo={resolvedBoardMemo}
+            stageInputs={stageInputs}
+            stageAiSections={stageAiSections}
+            stageManualEditedSections={stageManualEditedSections}
+            scrutinizingStageSection={scrutinizingStageSection}
+            stageBatchScrutiny={stageBatchScrutiny}
+            hasBranchProposalFile={branchProposalFile !== null}
+            hasAnyCaseData={Boolean(
+              resolvedICMemo.placeholders['#2#'] || resolvedICMemo.branchProposal
+            )}
+            aiError={aiError}
+            onStageInputChange={handleStageInputChange}
+            onUpdateStageAiSection={handleUpdateStageAiSection}
+            onScrutinizeStageSection={handleScrutinizeStageSection}
+            onRetryStageSection={handleRetryStageSection}
+            onScrutinizeStageAll={handleScrutinizeStageAll}
+            onDismissStageBatchSummary={() =>
+              setStageBatchScrutiny(INITIAL_STAGE_BATCH_SCRUTINY)
+            }
             templates={templates}
             onUploadTemplate={handleUploadTemplate}
             onRemoveTemplate={handleRemoveTemplate}
-            onDownloadDocx={handleDownloadDocx}
-            onDownloadPdf={handleDownloadPdf}
+            onDownloadDocx={() => handleDownloadDocx('board')}
+            onDownloadPdf={() => handleDownloadPdf('board')}
             downloading={downloading}
             downloadingPdf={downloadingPdf}
             onApplyAllChanges={handleApplyAllChanges}
             hasPendingChanges={hasPendingChanges}
             lastAppliedAt={appliedSnapshot.appliedAt}
+            applySignal={applySignal}
           />
         )}
 
         {activeTab === 'sanction' && (
-          <ComingSoonMemoTab
-            engine={sanctionEngine}
-            accountNo={resolvedICMemo.placeholders['#2#']}
-            branchName={resolvedICMemo.placeholders['#3#']}
-            proposalDate={resolvedICMemo.placeholders['#1#']}
-            memo={resolvedICMemo}
+          <StageMemoTab
+            docType="sanction"
+            stageMemo={resolvedSanctionMemo}
+            stageInputs={stageInputs}
+            stageAiSections={stageAiSections}
+            stageManualEditedSections={stageManualEditedSections}
+            scrutinizingStageSection={scrutinizingStageSection}
+            stageBatchScrutiny={stageBatchScrutiny}
+            hasBranchProposalFile={branchProposalFile !== null}
+            hasAnyCaseData={Boolean(
+              resolvedICMemo.placeholders['#2#'] || resolvedICMemo.branchProposal
+            )}
+            aiError={aiError}
+            onStageInputChange={handleStageInputChange}
+            onUpdateStageAiSection={handleUpdateStageAiSection}
+            onScrutinizeStageSection={handleScrutinizeStageSection}
+            onRetryStageSection={handleRetryStageSection}
+            onScrutinizeStageAll={handleScrutinizeStageAll}
+            onDismissStageBatchSummary={() =>
+              setStageBatchScrutiny(INITIAL_STAGE_BATCH_SCRUTINY)
+            }
             templates={templates}
             onUploadTemplate={handleUploadTemplate}
             onRemoveTemplate={handleRemoveTemplate}
-            onDownloadDocx={handleDownloadDocx}
-            onDownloadPdf={handleDownloadPdf}
+            onDownloadDocx={() => handleDownloadDocx('sanction')}
+            onDownloadPdf={() => handleDownloadPdf('sanction')}
             downloading={downloading}
             downloadingPdf={downloadingPdf}
             onApplyAllChanges={handleApplyAllChanges}
             hasPendingChanges={hasPendingChanges}
             lastAppliedAt={appliedSnapshot.appliedAt}
+            applySignal={applySignal}
           />
         )}
       </main>

@@ -10,19 +10,19 @@ export const MEMO_ENGINES: MemoEngineDefinition[] = [
   {
     id: 'mec',
     name: 'MEC Memo',
-    status: 'coming_soon',
-    description: 'Management Executive Committee Memorandum rules will be integrated here.',
+    status: 'implemented',
+    description: 'Management Executive Committee Memorandum carrying forward full IC Memo data with IC Memo Number, Date & Recommendation.',
   },
   {
     id: 'board',
     name: 'Board Memo',
-    status: 'coming_soon',
-    description: 'Board of Directors Memorandum rules will be integrated here.',
+    status: 'implemented',
+    description: 'Board of Directors Memorandum carrying forward IC & MEC data with MEC Memo Number, Date & Recommendation.',
   },
   {
     id: 'sanction',
     name: 'Sanction',
-    status: 'coming_soon',
-    description: 'Head Office Sanction Letter rules will be integrated here.',
+    status: 'implemented',
+    description: 'Head Office Sanction Letter carrying forward Board Memo Number, Date, cross-verified figures & operative terms.',
   },
 ];

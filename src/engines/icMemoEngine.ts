@@ -6,7 +6,12 @@ import type {
   ManualInputsData,
   MissingFieldItem,
   ResolvedICMemo,
+  ResolvedStageMemo,
   ScrutinySectionKey,
+  StageAiSectionsData,
+  StageMemoDocType,
+  StageMemoInputs,
+  StageScrutinySectionKey,
 } from '../types/memo';
 import { bdtToMillionStr, formatMillionNumber, parseIndianNumber } from '../utils/numberFormat';
 
@@ -290,6 +295,7 @@ export function resolveICMemo(
     sourceOfRepayment:
       manual.sourceOfRepayment.trim() || (ai.sec8SourceOfRepayment ?? '').trim(),
     justificationLines: resolved['#51#'] || '',
+    clientPrayer: ai.clientPrayer !== null ? ai.clientPrayer.trim() : '',
     branchVisitReport: ai.branchVisit !== null ? ai.branchVisit.trim() : '',
     samdObservation: ai.samdObservation !== null ? ai.samdObservation.trim() : '',
     sec13BranchRecommendation:
@@ -302,3 +308,82 @@ export function resolveICMemo(
     branchProposal: mergedBp,
   };
 }
+
+export const INITIAL_STAGE_INPUTS: StageMemoInputs = {
+  icMemoNumber: '',
+  icMemoDate: '',
+  mecMemoNumber: '',
+  mecMemoDate: '',
+  boardMemoNumber: '',
+  boardMemoDate: '',
+  sanctionRefNumber: '',
+  sanctionDate: '',
+};
+
+export const INITIAL_STAGE_AI_SECTIONS: StageAiSectionsData = {
+  mecIcRecommendation: null,
+  mecExecutiveSummary: null,
+  mecSamdRecommendation: null,
+  boardMecRecommendation: null,
+  boardProposalRationale: null,
+  boardResolutionTerms: null,
+  sanctionBoardAuthority: null,
+  sanctionCrossVerifiedSummary: null,
+  sanctionSpecialConditions: null,
+};
+
+export const STAGE_SECTIONS_BY_DOC: Record<StageMemoDocType, StageScrutinySectionKey[]> = {
+  mec: ['mecIcRecommendation', 'mecExecutiveSummary', 'mecSamdRecommendation'],
+  board: ['boardMecRecommendation', 'boardProposalRationale', 'boardResolutionTerms'],
+  sanction: ['sanctionBoardAuthority', 'sanctionCrossVerifiedSummary', 'sanctionSpecialConditions'],
+};
+
+export const STAGE_SECTION_LABELS: Record<StageScrutinySectionKey, string> = {
+  mecIcRecommendation: 'Recommendation of the Investment Committee (IC)',
+  mecExecutiveSummary: 'Executive Appraisal & Waiver Rationale for MEC',
+  mecSamdRecommendation: 'Observation and Recommendation of SAMD for MEC',
+  boardMecRecommendation: 'Recommendation of the Management Executive Committee (MEC)',
+  boardProposalRationale: 'Board Memorandum Summary & Financial Justification',
+  boardResolutionTerms: 'Proposed Board Resolution & Approval Terms',
+  sanctionBoardAuthority: 'Board Approval Reference & Sanction Basis',
+  sanctionCrossVerifiedSummary: 'AI Cross-Verified Facility & Liability Confirmation',
+  sanctionSpecialConditions: 'Operative Terms, Conditions & Redemption Covenants',
+};
+
+export function resolveStageMemo(
+  docType: StageMemoDocType,
+  icMemo: ResolvedICMemo,
+  stageInputs: StageMemoInputs,
+  stageAi: StageAiSectionsData
+): ResolvedStageMemo {
+  const cleanInputs: StageMemoInputs = {
+    icMemoNumber: stageInputs.icMemoNumber.trim(),
+    icMemoDate: stageInputs.icMemoDate.trim(),
+    mecMemoNumber: stageInputs.mecMemoNumber.trim(),
+    mecMemoDate: stageInputs.mecMemoDate.trim(),
+    boardMemoNumber: stageInputs.boardMemoNumber.trim(),
+    boardMemoDate: stageInputs.boardMemoDate.trim(),
+    sanctionRefNumber: stageInputs.sanctionRefNumber.trim(),
+    sanctionDate: stageInputs.sanctionDate.trim(),
+  };
+
+  const stageSections: Record<StageScrutinySectionKey, string> = {
+    mecIcRecommendation: (stageAi.mecIcRecommendation ?? '').trim(),
+    mecExecutiveSummary: (stageAi.mecExecutiveSummary ?? '').trim(),
+    mecSamdRecommendation: (stageAi.mecSamdRecommendation ?? '').trim(),
+    boardMecRecommendation: (stageAi.boardMecRecommendation ?? '').trim(),
+    boardProposalRationale: (stageAi.boardProposalRationale ?? '').trim(),
+    boardResolutionTerms: (stageAi.boardResolutionTerms ?? '').trim(),
+    sanctionBoardAuthority: (stageAi.sanctionBoardAuthority ?? '').trim(),
+    sanctionCrossVerifiedSummary: (stageAi.sanctionCrossVerifiedSummary ?? '').trim(),
+    sanctionSpecialConditions: (stageAi.sanctionSpecialConditions ?? '').trim(),
+  };
+
+  return {
+    docType,
+    icMemo,
+    stageInputs: cleanInputs,
+    stageSections,
+  };
+}
+

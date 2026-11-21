@@ -95,7 +95,7 @@ export const TemplateManagerPanel: React.FC<TemplateManagerPanelProps> = ({
                 <p className="text-xs text-slate-500 mt-0.5">
                   {singleDocType === 'ic'
                     ? 'Optional: Upload your custom IC Memo .docx format to generate outputs using that exact layout instead of the built-in default.'
-                    : `Upload a .docx format template for ${info.label} to populate and export documents preserving its exact original formatting.`}
+                    : `Optional: Built-in ${info.label} format is active. Upload a custom ${info.label} .docx format anytime to override layout while preserving exact formatting.`}
                 </p>
               )}
             </div>
@@ -181,7 +181,7 @@ export const TemplateManagerPanel: React.FC<TemplateManagerPanelProps> = ({
                     </span>
                   ) : (
                     <span className="text-xs text-slate-400">
-                      {doc.docType === 'ic' ? 'Default built-in' : 'Upload required'}
+                      Default built-in
                     </span>
                   )}
                 </div>

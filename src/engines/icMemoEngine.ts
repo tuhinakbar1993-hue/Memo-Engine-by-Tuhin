@@ -59,7 +59,8 @@ export function resolveICMemo(
   docs: ExtractedDocumentsState,
   manual: ManualInputsData,
   ai: AiSectionsData,
-  overrides: Record<string, string>
+  overrides: Record<string, string>,
+  manualEdited: Partial<Record<ScrutinySectionKey, boolean>> = {}
 ): ResolvedICMemo {
   const bp = docs.branchProposal;
   const out = docs.outstanding;
@@ -92,13 +93,13 @@ export function resolveICMemo(
 
   if (mergedBp) {
     if (ai.sec2LiabilityOurBank) {
-      if (ai.sec2LiabilityOurBank.limit.trim()) {
+      if (manualEdited.sec2LiabilityOurBank || ai.sec2LiabilityOurBank.limit.trim()) {
         mergedBp.sec2Limit = ai.sec2LiabilityOurBank.limit.trim();
       }
-      if (ai.sec2LiabilityOurBank.validity.trim()) {
+      if (manualEdited.sec2LiabilityOurBank || ai.sec2LiabilityOurBank.validity.trim()) {
         mergedBp.sec2Validity = ai.sec2LiabilityOurBank.validity.trim();
       }
-      if (ai.sec2LiabilityOurBank.remarks.trim()) {
+      if (manualEdited.sec2LiabilityOurBank || ai.sec2LiabilityOurBank.remarks.trim()) {
         mergedBp.sec2Remarks = ai.sec2LiabilityOurBank.remarks.trim();
       }
     }
@@ -107,7 +108,7 @@ export function resolveICMemo(
     }
     if (ai.sec4CibStatus) {
       mergedBp.section4Rows = ai.sec4CibStatus.rows;
-      if (ai.sec4CibStatus.cibDate.trim()) {
+      if (manualEdited.sec4CibStatus || ai.sec4CibStatus.cibDate.trim()) {
         mergedBp.section4CibDate = ai.sec4CibStatus.cibDate.trim();
       }
     }
@@ -176,8 +177,11 @@ export function resolveICMemo(
     // 5.5 Overdue
     '#59#': ovd ? bdtToMillionStr(ovd.overdueAmountBDT) : '',
 
-    // 5.6 CIB Report (authoritative CIB Report first, fallback to Branch Proposal sec 4 if missing)
-    '#62#': cib?.cibDate?.trim() || ai.sec4CibStatus?.cibDate?.trim() || '',
+    // 5.6 CIB Report (authoritative CIB Report first, fallback to Branch Proposal sec 4 or manual Sec 4 edit)
+    '#62#':
+      manualEdited.sec4CibStatus && ai.sec4CibStatus
+        ? ai.sec4CibStatus.cibDate.trim() || cib?.cibDate?.trim() || ''
+        : cib?.cibDate?.trim() || ai.sec4CibStatus?.cibDate?.trim() || bp?.section4CibDate?.trim() || '',
 
     // 5.7 Cost of Fund
     '#31#': cof ? bdtToMillionStr(cof.surplusDeficitBDT) : '',

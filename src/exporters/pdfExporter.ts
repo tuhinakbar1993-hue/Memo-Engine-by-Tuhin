@@ -108,17 +108,11 @@ export async function generateSynchronizedDocxBlob(
 }
 
 /**
- * Converts a synchronized .docx output directly into a multi-page PDF Blob,
+ * Renders a pre-generated (and verified) .docx Blob directly into a multi-page PDF Blob,
  * preserving original Word page sizes, orientation, margins, headers/footers,
  * tables, fonts, colors, and graphical elements.
  */
-export async function generateMemoPdfBlob(
-  docType: MemoDocType,
-  memo: ResolvedICMemo,
-  activeTemplate: MemoTemplateRecord | null
-): Promise<Blob> {
-  const docxBlob = await generateSynchronizedDocxBlob(docType, memo, activeTemplate);
-
+export async function generatePdfFromDocxBlob(docxBlob: Blob): Promise<Blob> {
   const host = document.createElement('div');
   host.style.position = 'fixed';
   host.style.left = '-14000px';
@@ -245,4 +239,18 @@ export async function generateMemoPdfBlob(
   } finally {
     host.remove();
   }
+}
+
+/**
+ * Converts a synchronized .docx output directly into a multi-page PDF Blob,
+ * preserving original Word page sizes, orientation, margins, headers/footers,
+ * tables, fonts, colors, and graphical elements.
+ */
+export async function generateMemoPdfBlob(
+  docType: MemoDocType,
+  memo: ResolvedICMemo,
+  activeTemplate: MemoTemplateRecord | null
+): Promise<Blob> {
+  const docxBlob = await generateSynchronizedDocxBlob(docType, memo, activeTemplate);
+  return generatePdfFromDocxBlob(docxBlob);
 }

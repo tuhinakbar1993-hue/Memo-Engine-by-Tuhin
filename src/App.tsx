@@ -6,8 +6,8 @@ import { LandingScreen } from './components/LandingScreen';
 import { ManualInputsTab } from './components/ManualInputsTab';
 import { resolveICMemo } from './engines/icMemoEngine';
 import { MEMO_ENGINES } from './engines/memoRegistry';
-import { inspectDocxTemplate } from './exporters/docxTemplateEngine';
-import { generateMemoPdfBlob, generateSynchronizedDocxBlob } from './exporters/pdfExporter';
+import { inspectDocxTemplate, verifyPopulatedDocxBlob } from './exporters/docxTemplateEngine';
+import { generatePdfFromDocxBlob, generateSynchronizedDocxBlob } from './exporters/pdfExporter';
 import {
   detectDocumentKeyFromFile,
   parseAccountStatementPdf,
@@ -34,6 +34,7 @@ import type {
   MemoTemplateRecord,
   ScrutinySectionKey,
 } from './types/memo';
+import { loadCentralCaseState, saveCentralCaseState } from './utils/caseStorage';
 import {
   deleteTemplateRecord,
   loadAllTemplateRecords,
@@ -241,25 +242,222 @@ export default function App() {
 
   const serverCachedSourceIdRef = useRef<string | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
+  const caseDirtyRef = useRef(false);
+  const persistTimerRef = useRef<number | null>(null);
+
+  const caseRef = useRef<{
+    extractedDocs: ExtractedDocumentsState;
+    manualInputs: ManualInputsData;
+    aiSections: AiSectionsData;
+    overrides: Record<string, string>;
+    manualEditedSections: Partial<Record<ScrutinySectionKey, boolean>>;
+  }>({
+    extractedDocs: INITIAL_EXTRACTED_DOCS,
+    manualInputs: INITIAL_MANUAL_INPUTS,
+    aiSections: INITIAL_AI_SECTIONS,
+    overrides: {},
+    manualEditedSections: {},
+  });
+  const docMetasRef = useRef<Record<DocumentKey, DocumentUploadMeta>>(INITIAL_DOC_METAS);
 
   const resolvedICMemo = useMemo(
-    () => resolveICMemo(extractedDocs, manualInputs, aiSections, overrides),
-    [extractedDocs, manualInputs, aiSections, overrides]
+    () =>
+      resolveICMemo(
+        extractedDocs,
+        manualInputs,
+        aiSections,
+        overrides,
+        manualEditedSections
+      ),
+    [extractedDocs, manualInputs, aiSections, overrides, manualEditedSections]
   );
 
   const [appliedSnapshot, setAppliedSnapshot] = useState<AppliedSyncState>(() => ({
     appliedAt: null,
     version: 0,
-    memo: resolveICMemo(INITIAL_EXTRACTED_DOCS, INITIAL_MANUAL_INPUTS, INITIAL_AI_SECTIONS, {}),
+    memo: resolveICMemo(INITIAL_EXTRACTED_DOCS, INITIAL_MANUAL_INPUTS, INITIAL_AI_SECTIONS, {}, {}),
   }));
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const [applySignal, setApplySignal] = useState(0);
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    caseRef.current = {
+      extractedDocs,
+      manualInputs,
+      aiSections,
+      overrides,
+      manualEditedSections,
+    };
+  }, [extractedDocs, manualInputs, aiSections, overrides, manualEditedSections]);
+
+  useEffect(() => {
+    docMetasRef.current = docMetas;
+  }, [docMetas]);
+
+  const persistCentralCaseNow = async (immediate = false) => {
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    if (immediate) {
+      await saveCentralCaseState(caseRef.current, docMetasRef.current);
+      return;
+    }
+    persistTimerRef.current = window.setTimeout(() => {
+      persistTimerRef.current = null;
+      void saveCentralCaseState(caseRef.current, docMetasRef.current);
+    }, 150);
+  };
+
+  const syncAppliedSnapshotFromRef = () => {
+    const latest = caseRef.current;
+    const syncedMemo = resolveICMemo(
+      latest.extractedDocs,
+      latest.manualInputs,
+      latest.aiSections,
+      latest.overrides,
+      latest.manualEditedSections
+    );
+    const nowStr = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    setAppliedSnapshot((prev) => ({
+      appliedAt: nowStr,
+      version: prev.version + 1,
+      memo: syncedMemo,
+    }));
+    setHasPendingChanges(false);
+    return syncedMemo;
+  };
+
+  const setDocMetasSync = (
+    updater:
+      | Record<DocumentKey, DocumentUploadMeta>
+      | ((prev: Record<DocumentKey, DocumentUploadMeta>) => Record<DocumentKey, DocumentUploadMeta>)
+  ) => {
+    const next = typeof updater === 'function' ? updater(docMetasRef.current) : updater;
+    docMetasRef.current = next;
+    setDocMetas(next);
+  };
+
+  const setExtractedDocsSync = (
+    updater:
+      | ExtractedDocumentsState
+      | ((prev: ExtractedDocumentsState) => ExtractedDocumentsState)
+  ) => {
+    caseDirtyRef.current = true;
+    const next = typeof updater === 'function' ? updater(caseRef.current.extractedDocs) : updater;
+    caseRef.current = { ...caseRef.current, extractedDocs: next };
+    setExtractedDocs(next);
+  };
+
+  const setManualInputsSync = (
+    updater: ManualInputsData | ((prev: ManualInputsData) => ManualInputsData)
+  ) => {
+    caseDirtyRef.current = true;
+    const next = typeof updater === 'function' ? updater(caseRef.current.manualInputs) : updater;
+    caseRef.current = { ...caseRef.current, manualInputs: next };
+    setManualInputs(next);
+  };
+
+  const setAiSectionsSync = (
+    updater: AiSectionsData | ((prev: AiSectionsData) => AiSectionsData)
+  ) => {
+    caseDirtyRef.current = true;
+    const next = typeof updater === 'function' ? updater(caseRef.current.aiSections) : updater;
+    caseRef.current = { ...caseRef.current, aiSections: next };
+    setAiSections(next);
+  };
+
+  const setOverridesSync = (
+    updater: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)
+  ) => {
+    caseDirtyRef.current = true;
+    const next = typeof updater === 'function' ? updater(caseRef.current.overrides) : updater;
+    caseRef.current = { ...caseRef.current, overrides: next };
+    setOverrides(next);
+  };
+
+  const setManualEditedSectionsSync = (
+    updater:
+      | Partial<Record<ScrutinySectionKey, boolean>>
+      | ((
+          prev: Partial<Record<ScrutinySectionKey, boolean>>
+        ) => Partial<Record<ScrutinySectionKey, boolean>>)
+  ) => {
+    caseDirtyRef.current = true;
+    const next =
+      typeof updater === 'function' ? updater(caseRef.current.manualEditedSections) : updater;
+    caseRef.current = { ...caseRef.current, manualEditedSections: next };
+    setManualEditedSections(next);
+  };
+
+  useEffect(() => {
     void loadAllTemplateRecords().then((loaded) => {
       setTemplates(loaded);
     });
+    void loadCentralCaseState().then((saved) => {
+      if (!saved || caseDirtyRef.current) return;
+      const hydrated = {
+        extractedDocs: { ...INITIAL_EXTRACTED_DOCS, ...(saved.extractedDocs || {}) },
+        manualInputs: { ...INITIAL_MANUAL_INPUTS, ...(saved.manualInputs || {}) },
+        aiSections: { ...INITIAL_AI_SECTIONS, ...(saved.aiSections || {}) },
+        overrides: saved.overrides || {},
+        manualEditedSections: saved.manualEditedSections || {},
+      };
+      caseRef.current = hydrated;
+      setExtractedDocs(hydrated.extractedDocs);
+      setManualInputs(hydrated.manualInputs);
+      setAiSections(hydrated.aiSections);
+      setOverrides(hydrated.overrides);
+      setManualEditedSections(hydrated.manualEditedSections);
+
+      if (saved.docUploadedFlags) {
+        setDocMetasSync((prev) => {
+          const next = { ...prev };
+          for (const key of Object.keys(INITIAL_DOC_METAS) as DocumentKey[]) {
+            const flag = saved.docUploadedFlags?.[key];
+            if (flag) {
+              next[key] = {
+                ...next[key],
+                uploaded: Boolean(flag.uploaded),
+                fileName: flag.fileName || '',
+              };
+            }
+          }
+          return next;
+        });
+      }
+
+      const hydratedMemo = resolveICMemo(
+        hydrated.extractedDocs,
+        hydrated.manualInputs,
+        hydrated.aiSections,
+        hydrated.overrides,
+        hydrated.manualEditedSections
+      );
+      setAppliedSnapshot({
+        appliedAt: saved.updatedAt
+          ? new Date(saved.updatedAt).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })
+          : null,
+        version: 1,
+        memo: hydratedMemo,
+      });
+      setHasPendingChanges(false);
+    });
+
+    return () => {
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -269,7 +467,7 @@ export default function App() {
   }, [applyNotice]);
 
   const updateDocStage = (key: DocumentKey, stage: string) => {
-    setDocMetas((prev) => ({
+    setDocMetasSync((prev) => ({
       ...prev,
       [key]: {
         ...prev[key],
@@ -279,7 +477,7 @@ export default function App() {
   };
 
   const handleFileUpload = async (key: DocumentKey, file: File) => {
-    setDocMetas((prev) => ({
+    setDocMetasSync((prev) => ({
       ...prev,
       [key]: {
         ...prev[key],
@@ -296,7 +494,7 @@ export default function App() {
       if (key === 'branchProposal') {
         const bpData = await parseBranchProposalFile(file, onStage);
         setBranchProposalFile(file);
-        setExtractedDocs((prev) => ({ ...prev, branchProposal: bpData }));
+        setExtractedDocsSync((prev) => ({ ...prev, branchProposal: bpData }));
         serverCachedSourceIdRef.current = null;
         setBatchScrutiny(INITIAL_BATCH_SCRUTINY);
         // Pre-warm client page images + register server cache silently so AI calls start immediately
@@ -318,25 +516,25 @@ export default function App() {
           });
       } else if (key === 'outstanding') {
         const res = await parseOutstandingPdf(file, onStage);
-        setExtractedDocs((prev) => ({ ...prev, outstanding: res.data }));
+        setExtractedDocsSync((prev) => ({ ...prev, outstanding: res.data }));
       } else if (key === 'partyPerformance') {
         const res = await parsePartyPerformancePdf(file, onStage);
-        setExtractedDocs((prev) => ({ ...prev, partyPerformance: res.data }));
+        setExtractedDocsSync((prev) => ({ ...prev, partyPerformance: res.data }));
       } else if (key === 'overdue') {
         const res = await parseOverduePdf(file, onStage);
-        setExtractedDocs((prev) => ({ ...prev, overdue: res.data }));
+        setExtractedDocsSync((prev) => ({ ...prev, overdue: res.data }));
       } else if (key === 'accountStatement') {
         const res = await parseAccountStatementPdf(file, onStage);
-        setExtractedDocs((prev) => ({ ...prev, accountStatement: res.data }));
+        setExtractedDocsSync((prev) => ({ ...prev, accountStatement: res.data }));
       } else if (key === 'cibReport') {
         const res = await parseCibReportPdf(file, onStage);
-        setExtractedDocs((prev) => ({ ...prev, cibReport: res.data }));
+        setExtractedDocsSync((prev) => ({ ...prev, cibReport: res.data }));
       } else if (key === 'costOfFund') {
         const res = await parseCostOfFundFile(file, onStage);
-        setExtractedDocs((prev) => ({ ...prev, costOfFund: res.data }));
+        setExtractedDocsSync((prev) => ({ ...prev, costOfFund: res.data }));
       }
 
-      setDocMetas((prev) => ({
+      setDocMetasSync((prev) => ({
         ...prev,
         [key]: {
           ...prev[key],
@@ -347,10 +545,11 @@ export default function App() {
           fileName: file.name,
         },
       }));
-      setHasPendingChanges(true);
+      syncAppliedSnapshotFromRef();
+      void persistCentralCaseNow(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to parse document.';
-      setDocMetas((prev) => ({
+      setDocMetasSync((prev) => ({
         ...prev,
         [key]: {
           ...prev[key],
@@ -427,49 +626,55 @@ export default function App() {
   };
 
   const handleManualChange = (field: keyof ManualInputsData, value: string) => {
-    setManualInputs((prev) => ({ ...prev, [field]: value }));
+    setManualInputsSync((prev) => ({ ...prev, [field]: value }));
     if (field === 'sourceOfRepayment') {
-      setManualEditedSections((prev) => ({
+      setManualEditedSectionsSync((prev) => ({
         ...prev,
         sec8SourceOfRepayment: value.trim() !== '',
       }));
     }
     const mappedCode = MANUAL_FIELD_TO_CODE[field];
     if (mappedCode) {
-      setOverrides((prev) => {
+      setOverridesSync((prev) => {
         if (prev[mappedCode] === undefined) return prev;
         const next = { ...prev };
         delete next[mappedCode];
         return next;
       });
     }
-    setHasPendingChanges(true);
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(false);
   };
 
   const handleManualSourceOfRepaymentChange = (value: string) => {
-    setManualInputs((prev) => ({ ...prev, sourceOfRepayment: value }));
-    setAiSections((prev) => ({ ...prev, sec8SourceOfRepayment: value }));
-    setManualEditedSections((prev) => ({ ...prev, sec8SourceOfRepayment: true }));
-    setHasPendingChanges(true);
+    setManualInputsSync((prev) => ({ ...prev, sourceOfRepayment: value }));
+    setAiSectionsSync((prev) => ({ ...prev, sec8SourceOfRepayment: value }));
+    setManualEditedSectionsSync((prev) => ({ ...prev, sec8SourceOfRepayment: true }));
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(false);
   };
 
   const handleOverrideChange = (code: string, value: string) => {
-    setOverrides((prev) => ({ ...prev, [code]: value }));
+    setOverridesSync((prev) => ({ ...prev, [code]: value }));
     if (value.trim() !== '') {
       if (code === '#51#') {
-        setManualEditedSections((prev) => ({ ...prev, justification: true }));
+        setManualEditedSectionsSync((prev) => ({ ...prev, justification: true }));
       } else if (code === '#54#') {
-        setManualEditedSections((prev) => ({ ...prev, sec1NatureOfBusiness: true }));
+        setManualEditedSectionsSync((prev) => ({ ...prev, sec1NatureOfBusiness: true }));
       } else if (code === '#56#' || code === '#58#') {
-        setManualEditedSections((prev) => ({ ...prev, sec2LiabilityOurBank: true }));
+        setManualEditedSectionsSync((prev) => ({ ...prev, sec2LiabilityOurBank: true }));
+      } else if (code === '#62#') {
+        setManualEditedSectionsSync((prev) => ({ ...prev, sec4CibStatus: true }));
       }
     }
-    setHasPendingChanges(true);
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(false);
   };
 
   const handleResetOverrides = () => {
-    setOverrides({});
-    setHasPendingChanges(true);
+    setOverridesSync({});
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(true);
   };
 
   const clearOverridesForSection = (section: ScrutinySectionKey) => {
@@ -480,9 +685,11 @@ export default function App() {
           ? ['#54#']
           : section === 'sec2LiabilityOurBank'
             ? ['#56#', '#58#']
-            : [];
+            : section === 'sec4CibStatus'
+              ? ['#62#']
+              : [];
     if (codesToClear.length === 0) return;
-    setOverrides((prev) => {
+    setOverridesSync((prev) => {
       let changed = false;
       const next = { ...prev };
       for (const c of codesToClear) {
@@ -495,23 +702,33 @@ export default function App() {
     });
   };
 
-  const buildScrutinyContext = () => ({
-    placeholders: resolvedICMemo.placeholders,
-    sourceOfRepayment: resolvedICMemo.sourceOfRepayment,
-    branchVisitReport: resolvedICMemo.branchVisitReport,
-    justificationLines: resolvedICMemo.justificationLines,
-    sec13BranchRecommendation: resolvedICMemo.sec13BranchRecommendation,
-    sec14IccdRecommendation: resolvedICMemo.sec14IccdRecommendation,
-    extractedSummaries: {
-      outstanding: extractedDocs.outstanding,
-      partyPerformance: extractedDocs.partyPerformance,
-      overdue: extractedDocs.overdue,
-      accountStatement: extractedDocs.accountStatement,
-      cibReport: extractedDocs.cibReport,
-      costOfFund: extractedDocs.costOfFund,
-    },
-    branchProposal: extractedDocs.branchProposal,
-  });
+  const buildScrutinyContext = () => {
+    const latest = caseRef.current;
+    const latestMemo = resolveICMemo(
+      latest.extractedDocs,
+      latest.manualInputs,
+      latest.aiSections,
+      latest.overrides,
+      latest.manualEditedSections
+    );
+    return {
+      placeholders: latestMemo.placeholders,
+      sourceOfRepayment: latestMemo.sourceOfRepayment,
+      branchVisitReport: latestMemo.branchVisitReport,
+      justificationLines: latestMemo.justificationLines,
+      sec13BranchRecommendation: latestMemo.sec13BranchRecommendation,
+      sec14IccdRecommendation: latestMemo.sec14IccdRecommendation,
+      extractedSummaries: {
+        outstanding: latest.extractedDocs.outstanding,
+        partyPerformance: latest.extractedDocs.partyPerformance,
+        overdue: latest.extractedDocs.overdue,
+        accountStatement: latest.extractedDocs.accountStatement,
+        cibReport: latest.extractedDocs.cibReport,
+        costOfFund: latest.extractedDocs.costOfFund,
+      },
+      branchProposal: latest.extractedDocs.branchProposal,
+    };
+  };
 
   const applyScrutinizedSectionResult = (
     section: ScrutinySectionKey,
@@ -528,23 +745,24 @@ export default function App() {
 
     if (isNarrative) {
       const text = String(result.text ?? '').trim();
-      setAiSections((prev) => ({
+      setAiSectionsSync((prev) => ({
         ...prev,
         [section]: text,
       }));
       if (section === 'sec8SourceOfRepayment') {
-        setManualInputs((prev) => ({ ...prev, sourceOfRepayment: '' }));
+        setManualInputsSync((prev) => ({ ...prev, sourceOfRepayment: '' }));
       }
     } else {
-      setAiSections((prev) => ({
+      setAiSectionsSync((prev) => ({
         ...prev,
         [section]: result,
       }));
     }
 
     clearOverridesForSection(section);
-    setManualEditedSections((prev) => ({ ...prev, [section]: false }));
-    setHasPendingChanges(true);
+    setManualEditedSectionsSync((prev) => ({ ...prev, [section]: false }));
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(true);
   };
 
   const fetchWithSourceCache = async (
@@ -929,41 +1147,37 @@ export default function App() {
     updater: (prev: AiSectionsData) => AiSectionsData,
     markManualSection?: ScrutinySectionKey
   ) => {
-    setAiSections(updater);
+    setAiSectionsSync(updater);
     if (markManualSection) {
-      setManualEditedSections((prev) => ({ ...prev, [markManualSection]: true }));
+      setManualEditedSectionsSync((prev) => ({ ...prev, [markManualSection]: true }));
       clearOverridesForSection(markManualSection);
     }
-    setHasPendingChanges(true);
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(false);
   };
 
   const handleUploadTemplate = async (docType: MemoDocType, file: File) => {
     const record = await inspectDocxTemplate(file, docType);
     setTemplates((prev) => ({ ...prev, [docType]: record }));
     await saveTemplateRecord(record);
-    setHasPendingChanges(true);
+    syncAppliedSnapshotFromRef();
   };
 
   const handleRemoveTemplate = async (docType: MemoDocType) => {
     setTemplates((prev) => ({ ...prev, [docType]: null }));
     await deleteTemplateRecord(docType);
-    setHasPendingChanges(true);
+    syncAppliedSnapshotFromRef();
   };
 
   const handleApplyAllChanges = () => {
-    const syncedMemo = resolveICMemo(extractedDocs, manualInputs, aiSections, overrides);
+    void persistCentralCaseNow(true);
+    syncAppliedSnapshotFromRef();
     const nowStr = new Date().toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
     });
     setApplySignal((s) => s + 1);
-    setAppliedSnapshot((prev) => ({
-      appliedAt: nowStr,
-      version: prev.version + 1,
-      memo: syncedMemo,
-    }));
-    setHasPendingChanges(false);
     setApplyNotice(
       `All changes applied at ${nowStr} — IC Memo, MEC Memo, Board Memo, and Sanction outputs synchronized.`
     );
@@ -980,23 +1194,43 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadDocx = async (docType: MemoDocType = 'ic') => {
+  const prepareVerifiedSynchronizedExport = async (docType: MemoDocType) => {
     const activeTemplate = templates[docType];
     if (docType !== 'ic' && !activeTemplate) {
-      setAiError(
+      throw new Error(
         `No default .docx template is uploaded for ${docType.toUpperCase()} Memo. Upload its own .docx template before exporting.`
       );
-      return;
     }
 
+    // Flush any queued microtask/state updates and persist central case data immediately
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    await persistCentralCaseNow(true);
+    const syncedMemo = syncAppliedSnapshotFromRef();
+
+    const docxBlob = await generateSynchronizedDocxBlob(docType, syncedMemo, activeTemplate);
+    const verification = await verifyPopulatedDocxBlob(
+      docxBlob,
+      syncedMemo,
+      docType,
+      activeTemplate
+    );
+    if (!verification.verified) {
+      throw new Error(
+        `Download verification failed: populated content for ${verification.missingLabels.join(', ')} was not included in the generated document.`
+      );
+    }
+
+    const acct = syncedMemo.placeholders['#2#'] || 'Draft';
+    const safeName = acct.replace(/[^A-Za-z0-9_-]/g, '_');
+    return { docxBlob, safeName };
+  };
+
+  const handleDownloadDocx = async (docType: MemoDocType = 'ic') => {
     setDownloading(true);
     setAiError(null);
     try {
-      const syncedMemo = resolveICMemo(extractedDocs, manualInputs, aiSections, overrides);
-      const blob = await generateSynchronizedDocxBlob(docType, syncedMemo, activeTemplate);
-      const acct = syncedMemo.placeholders['#2#'] || 'Draft';
-      const safeName = acct.replace(/[^A-Za-z0-9_-]/g, '_');
-      triggerBlobDownload(blob, `${DOC_FILE_PREFIX[docType]}_${safeName}.docx`);
+      const { docxBlob, safeName } = await prepareVerifiedSynchronizedExport(docType);
+      triggerBlobDownload(docxBlob, `${DOC_FILE_PREFIX[docType]}_${safeName}.docx`);
     } catch (err) {
       setAiError(err instanceof Error ? err.message : 'Failed to generate .docx document.');
     } finally {
@@ -1005,22 +1239,12 @@ export default function App() {
   };
 
   const handleDownloadPdf = async (docType: MemoDocType = 'ic') => {
-    const activeTemplate = templates[docType];
-    if (docType !== 'ic' && !activeTemplate) {
-      setAiError(
-        `No default .docx template is uploaded for ${docType.toUpperCase()} Memo. Upload its own .docx template before exporting.`
-      );
-      return;
-    }
-
     setDownloadingPdf(true);
     setAiError(null);
     try {
-      const syncedMemo = resolveICMemo(extractedDocs, manualInputs, aiSections, overrides);
-      const blob = await generateMemoPdfBlob(docType, syncedMemo, activeTemplate);
-      const acct = syncedMemo.placeholders['#2#'] || 'Draft';
-      const safeName = acct.replace(/[^A-Za-z0-9_-]/g, '_');
-      triggerBlobDownload(blob, `${DOC_FILE_PREFIX[docType]}_${safeName}.pdf`);
+      const { docxBlob, safeName } = await prepareVerifiedSynchronizedExport(docType);
+      const pdfBlob = await generatePdfFromDocxBlob(docxBlob);
+      triggerBlobDownload(pdfBlob, `${DOC_FILE_PREFIX[docType]}_${safeName}.pdf`);
     } catch (err) {
       setAiError(err instanceof Error ? err.message : 'Failed to generate .pdf document.');
     } finally {
@@ -1126,6 +1350,21 @@ export default function App() {
             <div className="max-w-7xl mx-auto flex items-center gap-2 text-xs font-medium text-emerald-900">
               <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
               <span>{applyNotice}</span>
+            </div>
+          </div>
+        )}
+
+        {aiError && activeTab !== 'ic' && (
+          <div className="bg-red-50 border-t border-red-200 px-4 sm:px-6 py-2">
+            <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 text-xs font-medium text-red-800">
+              <span>{aiError}</span>
+              <button
+                type="button"
+                onClick={() => setAiError(null)}
+                className="underline cursor-pointer shrink-0"
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         )}

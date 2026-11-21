@@ -377,6 +377,7 @@ export function buildTemplateTokenMap(memo: ResolvedICMemo): {
     cis: ph['#69#'] || '',
     customerId: ph['#69#'] || '',
     sourceOfRepayment: memo.sourceOfRepayment || '',
+    sec8SourceOfRepayment: memo.sourceOfRepayment || '',
     branchVisit: memo.branchVisitReport || '',
     branchVisitReport: memo.branchVisitReport || '',
     branchRecommendation: memo.sec13BranchRecommendation || '',
@@ -385,6 +386,8 @@ export function buildTemplateTokenMap(memo: ResolvedICMemo): {
     sec14IccdRecommendation: memo.sec14IccdRecommendation || '',
     samdObservation: memo.samdObservation || '',
     samd: memo.samdObservation || '',
+    nonFundedNote: memo.sec2NonFundedNote || '',
+    sec7OthersNote: memo.sec7OthersNote || '',
   };
 
   const optionalTokens: Record<string, string> = {};
@@ -401,10 +404,10 @@ function replaceTokensInParagraph(
   xmlDoc: Document,
   pEl: Element,
   tokenMap: Record<string, string>
-): boolean {
-  let replacedAny = false;
+): Set<string> {
+  const replacedKeys = new Set<string>();
   const keys = Object.keys(tokenMap).sort((a, b) => b.length - a.length);
-  if (keys.length === 0) return false;
+  if (keys.length === 0) return replacedKeys;
 
   // Iterative scan so multiple tokens in one paragraph are all replaced cleanly
   let safety = 0;
@@ -431,10 +434,10 @@ function replaceTokensInParagraph(
 
     if (bestIdx === -1) break;
     replaceSpanInParagraph(xmlDoc, pEl, bestIdx, bestIdx + bestKey.length, tokenMap[bestKey]);
-    replacedAny = true;
+    replacedKeys.add(bestKey);
   }
 
-  return replacedAny;
+  return replacedKeys;
 }
 
 function hasAnyKnownToken(text: string, tokenKeys: string[]): boolean {
@@ -447,6 +450,221 @@ function nonEmpty(v: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+function paraReplacedAnyOf(
+  replacedTokensMap: Map<Element, Set<string>>,
+  pEl: Element,
+  candidateKeys: string[]
+): boolean {
+  const set = replacedTokensMap.get(pEl);
+  if (!set || set.size === 0) return false;
+  return candidateKeys.some((k) => set.has(k));
+}
+
+function cellReplacedAnyToken(
+  replacedTokensMap: Map<Element, Set<string>>,
+  tcEl: Element
+): boolean {
+  return directChildren(tcEl, 'p').some((p) => {
+    const s = replacedTokensMap.get(p);
+    return Boolean(s && s.size > 0);
+  });
+}
+
+function isSectionBoundaryText(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (
+    /^(?:Justification\s+of\s+(?:the\s+)?Proposed\s+Facility|Previous\s+Board\s+Decision|Subject\s*:|Key\s+Points\s*:|Note\s*:\s*Information\s+Regarding\s+Down)/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  if (/^(?:1[0-7]|[1-9])\s*[.)]\s*[A-Za-z]/.test(t)) return true;
+  if (/^(?:[bc]\.\s*(?:Investment\s+was\s+not\s+created|The\s+client\s+is\s+not\s+a\s+willful)|c\.\s*Others\s*:?)/i.test(t)) {
+    return true;
+  }
+  if (/^(?:Particular\s+of\s+the\s+Proprietor|Remarks\s*:\s*Director\s+of\s+any\s+Bank)/i.test(t)) {
+    return true;
+  }
+  if (
+    /^(?:The\s+proposal\s+is\s+hereby\s+placed|Submitted\s+for\s+kind\s+decision|Union\s+Bank\s+PLC\s+Unit|Special\s+Asset\s+Management\s+Division|\([A-Z][a-z]+\s+[A-Z]|Deputy\s+Managing\s+Director|Additional\s+Managing\s+Director|Managing\s+Director\b)/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Collects contiguous sibling <w:p> elements directly following `headingP` inside the same parent
+ * container, stopping at any table (<w:tbl>) or any subsequent section/closing boundary.
+ */
+function collectContiguousSubParagraphs(headingP: Element, stopAtSubBullets = false): Element[] {
+  const out: Element[] = [];
+  let node: ChildNode | null = headingP.nextSibling;
+  while (node) {
+    if (node.nodeType === 1) {
+      const el = node as Element;
+      if (el.localName === 'tbl' || firstDescendant(el, 'tbl')) {
+        break;
+      }
+      if (el.localName === 'p') {
+        const subTxt = getParagraphPlainText(el).trim();
+        if (isSectionBoundaryText(subTxt)) break;
+        if (stopAtSubBullets && /^[bc]\.\s+/i.test(subTxt)) break;
+        out.push(el);
+      } else if (el.localName === 'sdt') {
+        const sdtP = firstDescendant(el, 'p');
+        if (sdtP) {
+          const subTxt = getParagraphPlainText(sdtP).trim();
+          if (isSectionBoundaryText(subTxt)) break;
+          if (stopAtSubBullets && /^[bc]\.\s+/i.test(subTxt)) break;
+          out.push(sdtP);
+        }
+      }
+    }
+    node = node.nextSibling;
+  }
+  return out;
+}
+
+/**
+ * Inserts/updates body sub-paragraphs right under `headingP`, cloning existing sub-paragraph styling
+ * when available or building clean non-bold/non-underlined runs inheriting `headingP` font/size.
+ */
+function populateSubParagraphLines(
+  xmlDoc: Document,
+  headingP: Element,
+  existingSub: Element[],
+  lines: string[],
+  defaultIndent = '180'
+) {
+  if (lines.length === 0) return;
+
+  const styledSub =
+    existingSub.find((p) => getParagraphPlainText(p).trim() !== '') ?? existingSub[0] ?? null;
+
+  const createStyledPara = (lineText: string): Element => {
+    if (styledSub) {
+      const cloned = styledSub.cloneNode(true) as Element;
+      setParagraphTextPreservingStyle(xmlDoc, cloned, lineText);
+      return cloned;
+    }
+    const pNew = xmlDoc.createElementNS(W_NS, 'w:p');
+    const pPr = xmlDoc.createElementNS(W_NS, 'w:pPr');
+    if (defaultIndent) {
+      const ind = xmlDoc.createElementNS(W_NS, 'w:ind');
+      ind.setAttribute('w:left', defaultIndent);
+      pPr.appendChild(ind);
+    }
+    const sp = xmlDoc.createElementNS(W_NS, 'w:spacing');
+    sp.setAttribute('w:before', '15');
+    sp.setAttribute('w:after', '15');
+    pPr.appendChild(sp);
+    pNew.appendChild(pPr);
+
+    const rEl = xmlDoc.createElementNS(W_NS, 'w:r');
+    const cleanRPr = buildCleanValueRPr(headingP);
+    if (cleanRPr) {
+      rEl.appendChild(cleanRPr);
+    }
+    const tEl = xmlDoc.createElementNS(W_NS, 'w:t');
+    setTextNodeValue(tEl, lineText);
+    rEl.appendChild(tEl);
+    pNew.appendChild(rEl);
+    return pNew;
+  };
+
+  if (existingSub.length > 0) {
+    setParagraphTextPreservingStyle(xmlDoc, existingSub[0], lines[0]);
+    let insertAfter: Element = existingSub[0];
+    for (let k = 1; k < lines.length; k++) {
+      if (k < existingSub.length) {
+        setParagraphTextPreservingStyle(xmlDoc, existingSub[k], lines[k]);
+        insertAfter = existingSub[k];
+      } else {
+        const cloned = createStyledPara(lines[k]);
+        insertAfter.parentNode?.insertBefore(cloned, insertAfter.nextSibling);
+        insertAfter = cloned;
+      }
+    }
+    for (let k = lines.length; k < existingSub.length; k++) {
+      existingSub[k].parentNode?.removeChild(existingSub[k]);
+    }
+  } else {
+    let insertAfter: Element = headingP;
+    for (const line of lines) {
+      const pNew = createStyledPara(line);
+      insertAfter.parentNode?.insertBefore(pNew, insertAfter.nextSibling);
+      insertAfter = pNew;
+    }
+  }
+}
+
+/**
+ * Populates a narrative heading paragraph that may either hold its value inline after ":"
+ * OR place its body in sub-paragraph slot(s) below the heading (or adjacent table cell).
+ */
+function populateNarrativeHeading(
+  xmlDoc: Document,
+  pEl: Element,
+  valueText: string,
+  preferSubParagraphs = false
+) {
+  const fullText = getParagraphPlainText(pEl).trim();
+  const colonIdx = fullText.indexOf(':');
+  const existingTail = colonIdx !== -1 ? fullText.slice(colonIdx + 1).trim() : '';
+  const subParas = collectContiguousSubParagraphs(pEl);
+  const lines = valueText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return;
+
+  // Check if pEl sits in a 2+ cell table row as [Label Cell, Value Cell]
+  const tcParent = pEl.parentElement?.localName === 'tc' ? pEl.parentElement : null;
+  const trParent = tcParent?.parentElement?.localName === 'tr' ? tcParent.parentElement : null;
+  if (tcParent && trParent) {
+    const rowCells = directChildren(trParent, 'tc');
+    const tcIdx = rowCells.indexOf(tcParent);
+    if (rowCells.length >= 2 && tcIdx !== -1 && tcIdx < rowCells.length - 1 && !existingTail && subParas.length === 0) {
+      const nextCell = rowCells[tcIdx + 1];
+      const nextText = getCellPlainText(nextCell).trim();
+      if (!isSectionBoundaryText(nextText)) {
+        setCellTextPreservingFormat(xmlDoc, nextCell, lines.join('\n'));
+        return;
+      }
+    }
+  }
+
+  // If sub-paragraph slots already exist below the heading and there is no inline tail (or multi-line/preferred),
+  // write cleanly into sub-paragraphs so template layout & indentation stay intact.
+  if (
+    subParas.length > 0 &&
+    (!existingTail || preferSubParagraphs || lines.length > 1)
+  ) {
+    if (existingTail && !preferSubParagraphs) {
+      // Inline text had value and sub-paras are stale blanks/notes -> replace inline and clear stale sub-paras
+      setParagraphValueAfterColon(xmlDoc, pEl, lines.join('\n'));
+      for (const sp of subParas) {
+        sp.parentNode?.removeChild(sp);
+      }
+      return;
+    }
+    populateSubParagraphLines(xmlDoc, pEl, subParas, lines, '120');
+    return;
+  }
+
+  if (colonIdx !== -1 && !preferSubParagraphs) {
+    setParagraphValueAfterColon(xmlDoc, pEl, lines.join('\n'));
+    return;
+  }
+
+  populateSubParagraphLines(xmlDoc, pEl, subParas, lines, '120');
+}
+
 /**
  * Clones/updates table data rows in [dataStartIdx, dataEndIdx) preserving original <w:trPr>, <w:tcPr>, borders, fonts, and sizes.
  */
@@ -456,11 +674,23 @@ function populateTableDataRowsPreservingFormat(
   dataStartIdx: number,
   dataEndIdx: number,
   rowsValues: string[][],
-  allowAppend = true
+  allowAppend = true,
+  clearWhenEmpty = false
 ) {
   const trs = directChildren(tbl, 'tr');
   const existingDataTrs = trs.slice(dataStartIdx, dataEndIdx);
-  if (existingDataTrs.length === 0 || rowsValues.length === 0) return;
+  if (existingDataTrs.length === 0) return;
+
+  if (rowsValues.length === 0) {
+    if (!clearWhenEmpty) return;
+    for (const tr of existingDataTrs) {
+      const tcs = directChildren(tr, 'tc');
+      for (const tc of tcs) {
+        setCellTextPreservingFormat(xmlDoc, tc, '');
+      }
+    }
+    return;
+  }
 
   const prototypeTr = existingDataTrs[0];
   let insertAnchor: Element = existingDataTrs[existingDataTrs.length - 1];
@@ -495,13 +725,13 @@ function populateTableDataRowsPreservingFormat(
 
 /**
  * Structural & label-based population for uploaded .docx templates that do not use explicit #code# tokens
- * (or for untokenized sections/tables in a standard Bank Memo template).
+ * (or for mixed/untokenized sections and tables in a Bank Memo template).
  * Strictly preserves all tables, nested tables, borders, column widths, fonts, sizes, margins, orientation, headers, and footers.
  */
 function applyStructuralPopulations(
   xmlDoc: Document,
   memo: ResolvedICMemo,
-  paragraphsWithTokens: Set<Element>
+  replacedTokensMap: Map<Element, Set<string>>
 ) {
   const ph = memo.placeholders;
   const bp = memo.branchProposal;
@@ -510,26 +740,37 @@ function applyStructuralPopulations(
   const bodyEl = firstDescendant(xmlDoc.documentElement, 'body');
   if (!bodyEl) return;
 
-  // 1. Process all paragraphs in document order (supporting headings inside SDTs/containers as well as direct body)
-  const bodyParas = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'p')).filter(
-    (pEl) => !pEl.parentElement || pEl.parentElement.localName !== 'tc'
-  );
-  for (let i = 0; i < bodyParas.length; i++) {
-    const pEl = bodyParas[i];
-    if (paragraphsWithTokens.has(pEl)) continue;
-
+  // 1. Process all paragraphs in document order (supporting headings in body, SDTs, and 1-cell layout boxes;
+  // multi-column key-value tables are handled below unless explicitly detected as a [Heading | Value] row)
+  const allParas = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'p'));
+  for (let i = 0; i < allParas.length; i++) {
+    const pEl = allParas[i];
     const text = getParagraphPlainText(pEl).trim();
     if (!text) continue;
 
     // 1. Nature of Business:
-    if (/^1\.\s*Nature of Business\s*:/i.test(text) && nonEmpty(ph['#54#'])) {
-      setParagraphValueAfterColon(xmlDoc, pEl, ph['#54#']);
+    if (
+      /^(?:1\.\s*)?Nature of Business\s*:?/i.test(text) &&
+      nonEmpty(ph['#54#']) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, ['#54#', '#natureOfBusiness#', '{{natureOfBusiness}}', '[natureOfBusiness]'])
+    ) {
+      // Avoid touching multi-column Section 10 row if it sits inside a 3/4 col table (Section 10 handles Business Type/Nature)
+      const parentTc = pEl.parentElement?.localName === 'tc' ? pEl.parentElement : null;
+      const parentTr = parentTc?.parentElement?.localName === 'tr' ? parentTc.parentElement : null;
+      const colCount = parentTr ? directChildren(parentTr, 'tc').length : 0;
+      if (colCount <= 2) {
+        populateNarrativeHeading(xmlDoc, pEl, ph['#54#'], false);
+      }
       continue;
     }
 
     // 2. Liability Position ... as on ...:
-    if (/^2\.\s*Liability Position.*as on\b/i.test(text) && nonEmpty(ph['#68#'])) {
-      const m = text.match(/as on\s+([^:]+):/i);
+    if (
+      /^(?:2\.\s*)?Liability Position.*as on\b/i.test(text) &&
+      nonEmpty(ph['#68#']) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, ['#68#', '#osDate#', '#printDate#', '{{osDate}}'])
+    ) {
+      const m = text.match(/as on\s+([^:]+):?/i);
       if (m) {
         const start = text.indexOf(m[1], text.toLowerCase().indexOf('as on'));
         if (start !== -1) {
@@ -540,7 +781,11 @@ function applyStructuralPopulations(
     }
 
     // 4. CIB Status: Report dated ... shows:
-    if (/^4\.\s*CIB Status\s*:/i.test(text) && nonEmpty(ph['#62#'])) {
+    if (
+      /^(?:4\.\s*)?CIB Status\s*:/i.test(text) &&
+      nonEmpty(ph['#62#']) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, ['#62#', '#cibDate#', '{{cibDate}}'])
+    ) {
       const m = text.match(/Report dated\s+(.+?)\s+shows/i);
       if (m) {
         const start = text.indexOf(m[1]);
@@ -552,18 +797,22 @@ function applyStructuralPopulations(
     }
 
     // 5. Legal Action Status header note
-    if (/^5\.\s*Legal Action Status.*:/i.test(text) && nonEmpty(bp?.section5StatusNote)) {
-      setParagraphValueAfterColon(xmlDoc, pEl, bp!.section5StatusNote);
+    if (/^(?:5\.\s*)?Legal Action Status[^:]*:/i.test(text) && bp?.section5StatusNote !== undefined) {
+      if (nonEmpty(bp.section5StatusNote)) {
+        setParagraphValueAfterColon(xmlDoc, pEl, bp.section5StatusNote);
+      }
       continue;
     }
 
     // 6. Audit, Compliance header note
-    if (/^6\.\s*Audit,\s*Compliance.*:/i.test(text) && nonEmpty(bp?.section6StatusNote)) {
-      setParagraphValueAfterColon(xmlDoc, pEl, bp!.section6StatusNote);
+    if (/^(?:6\.\s*)?Audit,\s*Compliance[^:]*:/i.test(text) && bp?.section6StatusNote !== undefined) {
+      if (nonEmpty(bp.section6StatusNote)) {
+        setParagraphValueAfterColon(xmlDoc, pEl, bp.section6StatusNote);
+      }
       continue;
     }
 
-    // 7a / 7b Notes & Collateral Schedules
+    // 7a / 7b / 7c Notes & Collateral Schedules
     if (/^a\.\s*Primary\s*:/i.test(text) && nonEmpty(bp?.section7PrimaryNote)) {
       setParagraphValueAfterColon(xmlDoc, pEl, bp!.section7PrimaryNote);
       continue;
@@ -573,79 +822,148 @@ function applyStructuralPopulations(
         setParagraphValueAfterColon(xmlDoc, pEl, bp!.section7CollateralNote);
       }
       if (bp?.section7CollateralSchedules && bp.section7CollateralSchedules.length > 0) {
+        const subParas = collectContiguousSubParagraphs(pEl);
         let schedIdx = 0;
-        for (let j = i + 1; j < bodyParas.length && schedIdx < bp.section7CollateralSchedules.length; j++) {
-          const sTxt = getParagraphPlainText(bodyParas[j]).trim();
-          if (/^c\.\s*Others|^8\./i.test(sTxt)) break;
+        for (const subP of subParas) {
+          if (schedIdx >= bp.section7CollateralSchedules.length) break;
+          const sTxt = getParagraphPlainText(subP).trim();
+          if (/^c\.\s*Others/i.test(sTxt)) break;
           if (/^Schedule[-\s]*\d+/i.test(sTxt)) {
-            setParagraphTextPreservingStyle(xmlDoc, bodyParas[j], bp.section7CollateralSchedules[schedIdx]);
+            setParagraphTextPreservingStyle(xmlDoc, subP, bp.section7CollateralSchedules[schedIdx]);
             schedIdx++;
           }
         }
       }
       continue;
     }
+    if (/^c\.\s*Others\s*:?/i.test(text) && nonEmpty(memo.sec7OthersNote)) {
+      const subParas = collectContiguousSubParagraphs(pEl);
+      const customLines = memo.sec7OthersNote
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (customLines.length > 0) {
+        const lastStandardIdx = subParas.reduce((acc, p, idx) => {
+          const t = getParagraphPlainText(p).trim();
+          return /^(?:a\.\s*Usual Charge|b\.\s*Acceptance of Branch)/i.test(t) ? idx : acc;
+        }, -1);
+        const targetSub = subParas.slice(lastStandardIdx + 1);
+        const anchor = lastStandardIdx >= 0 ? subParas[lastStandardIdx] : pEl;
+        populateSubParagraphLines(xmlDoc, anchor, targetSub, customLines, '320');
+      }
+      continue;
+    }
 
     // 8. Source of Repayment:
-    if (/^8\.\s*Source of Repayment\s*:/i.test(text) && nonEmpty(memo.sourceOfRepayment)) {
-      setParagraphValueAfterColon(xmlDoc, pEl, memo.sourceOfRepayment);
+    if (
+      /^(?:8\.\s*)?Source of Repayment\s*:?/i.test(text) &&
+      nonEmpty(memo.sourceOfRepayment) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, [
+        '#sourceOfRepayment#',
+        '#sec8SourceOfRepayment#',
+        '{{sourceOfRepayment}}',
+        '[sourceOfRepayment]',
+      ])
+    ) {
+      populateNarrativeHeading(xmlDoc, pEl, memo.sourceOfRepayment, false);
       continue;
     }
 
     // 12. Branch Visit Report:
-    if (/^12\.\s*Branch Visit Report\s*:/i.test(text) && nonEmpty(memo.branchVisitReport)) {
-      setParagraphValueAfterColon(xmlDoc, pEl, memo.branchVisitReport);
+    if (
+      /^(?:12\.\s*)?Branch Visit Report\s*:?/i.test(text) &&
+      nonEmpty(memo.branchVisitReport) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, [
+        '#branchVisit#',
+        '#branchVisitReport#',
+        '{{branchVisit}}',
+        '{{branchVisitReport}}',
+        '[branchVisit]',
+        '[branchVisitReport]',
+      ])
+    ) {
+      populateNarrativeHeading(xmlDoc, pEl, memo.branchVisitReport, false);
       continue;
     }
 
     // 13. Recommendation of The Branch:
-    if (/^13\.\s*Recommendation of The Branch\s*:/i.test(text)) {
+    if (/^(?:13\.\s*)?Recommendation of (?:the )?Branch\b/i.test(text)) {
+      // Update Proposal Ref & Date if present in heading line and not already tokenized
       let updated = text;
-      if (nonEmpty(ph['#64#'])) {
+      if (
+        nonEmpty(ph['#64#']) &&
+        !paraReplacedAnyOf(replacedTokensMap, pEl, ['#64#', '#refNo#', '#referenceNo#'])
+      ) {
         updated = updated.replace(/(Proposal\s*Ref\s*:\s*)(.+?)(\s+dated\b)/i, `$1${ph['#64#']}$3`);
       }
-      if (nonEmpty(ph['#65#'])) {
+      if (
+        nonEmpty(ph['#65#']) &&
+        !paraReplacedAnyOf(replacedTokensMap, pEl, ['#65#', '#branchProposalDate#'])
+      ) {
         updated = updated.replace(/(\bdated\s+)(.+)$/i, `$1${ph['#65#']}`);
       }
-      if (nonEmpty(memo.sec13BranchRecommendation)) {
-        const cleanRec = memo.sec13BranchRecommendation.replace(/\s*\n+\s*/g, ' ');
-        if (updated !== text) {
-          const colonIdx = updated.indexOf(':');
-          if (colonIdx !== -1) {
-            setParagraphValueAfterColon(
-              xmlDoc,
-              pEl,
-              `${updated.slice(colonIdx + 1).trim()}\n${cleanRec}`
-            );
-          }
-        } else {
-          const colonIdx = text.indexOf(':');
-          if (colonIdx !== -1) {
-            const existingTail = text.slice(colonIdx + 1).trim();
-            setParagraphValueAfterColon(
-              xmlDoc,
-              pEl,
-              existingTail ? `${existingTail}\n${cleanRec}` : cleanRec
-            );
-          }
-        }
-      } else if (updated !== text) {
+      if (updated !== text) {
         const colonIdx = updated.indexOf(':');
         if (colonIdx !== -1) {
           setParagraphValueAfterColon(xmlDoc, pEl, updated.slice(colonIdx + 1).trim());
         }
       }
+
+      if (
+        nonEmpty(memo.sec13BranchRecommendation) &&
+        !paraReplacedAnyOf(replacedTokensMap, pEl, [
+          '#branchRecommendation#',
+          '#sec13BranchRecommendation#',
+          '{{branchRecommendation}}',
+          '{{sec13BranchRecommendation}}',
+        ])
+      ) {
+        const recLines = memo.sec13BranchRecommendation
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        const subParas = collectContiguousSubParagraphs(pEl);
+        const hasTokenSub = subParas.some((sp) =>
+          paraReplacedAnyOf(replacedTokensMap, sp, [
+            '#branchRecommendation#',
+            '#sec13BranchRecommendation#',
+            '{{branchRecommendation}}',
+            '{{sec13BranchRecommendation}}',
+          ])
+        );
+        if (!hasTokenSub && recLines.length > 0) {
+          // If heading has "The Branch Recommended the following...", keep heading intact and populate sub-paragraphs below
+          if (/The Branch Recommended/i.test(text) || subParas.length > 0) {
+            populateSubParagraphLines(xmlDoc, pEl, subParas, recLines, '180');
+          } else {
+            populateNarrativeHeading(xmlDoc, pEl, recLines.join('\n'), false);
+          }
+        }
+      }
       continue;
     }
 
-    // 14. Recommendation of Internal Control & Compliance Division:
-    if (/^14\.\s*Recommendation of Internal Control/i.test(text) && nonEmpty(memo.sec14IccdRecommendation)) {
-      setParagraphValueAfterColon(xmlDoc, pEl, memo.sec14IccdRecommendation);
+    // 14. Recommendation of Internal Control & Compliance Division / ICCD:
+    if (
+      /^(?:14\.\s*)?Recommendation of (?:Internal Control|IC\s*&?\s*CD|ICCD)\b/i.test(text) &&
+      nonEmpty(memo.sec14IccdRecommendation) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, [
+        '#iccdRecommendation#',
+        '#sec14IccdRecommendation#',
+        '{{iccdRecommendation}}',
+        '{{sec14IccdRecommendation}}',
+      ])
+    ) {
+      populateNarrativeHeading(xmlDoc, pEl, memo.sec14IccdRecommendation, false);
       continue;
     }
 
     // Subject: ... waiver of Tk. ...
-    if (/^Subject\s*:/i.test(text) && nonEmpty(ph['#4#'])) {
+    if (
+      /^Subject\s*:/i.test(text) &&
+      nonEmpty(ph['#4#']) &&
+      !paraReplacedAnyOf(replacedTokensMap, pEl, ['#4#', '#waiverAmount#', '#waiver#'])
+    ) {
       const m = text.match(/waiver of Tk\.?\s*([^\s,]+(?:\s*million)?)/i);
       if (m) {
         const start = text.indexOf(m[1], text.toLowerCase().indexOf('waiver of tk'));
@@ -656,21 +974,45 @@ function applyStructuralPopulations(
       continue;
     }
 
-    // Justification of The Proposed Facility: -> update following "a." line if justificationLines exists
-    if (/^Justification of The Proposed Facility\s*:?/i.test(text) && nonEmpty(memo.justificationLines)) {
-      const nextP = bodyParas[i + 1];
-      if (nextP && !paragraphsWithTokens.has(nextP)) {
-        const nextTxt = getParagraphPlainText(nextP).trim();
-        if (/^a\./i.test(nextTxt)) {
-          const cleanLines = memo.justificationLines
-            .split('\n')
-            .map((l) => l.trim())
-            .filter(Boolean)
-            .join('\n');
-          if (nextTxt.length > 2) {
-            replaceSpanInParagraph(xmlDoc, nextP, 2, nextTxt.length, ` ${cleanLines}`);
+    // Justification of The Proposed Facility:
+    if (/^(?:\d+\.\s*)?Justification of (?:the )?Proposed Facility\s*:?/i.test(text) && nonEmpty(memo.justificationLines)) {
+      const cleanLines = memo.justificationLines
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const justAlreadyTokenized = paraReplacedAnyOf(replacedTokensMap, pEl, [
+        '#51#',
+        '#justification#',
+        '{{justification}}',
+      ]);
+      if (!justAlreadyTokenized && cleanLines.length > 0) {
+        const subParas = collectContiguousSubParagraphs(pEl, true);
+        const hasTokenSub = subParas.some((sp) =>
+          paraReplacedAnyOf(replacedTokensMap, sp, ['#51#', '#justification#', '{{justification}}'])
+        );
+        if (!hasTokenSub) {
+          const aBulletPara = subParas.find((sp) => /^a[\.\)]/i.test(getParagraphPlainText(sp).trim()));
+          if (aBulletPara) {
+            const aIdx = subParas.indexOf(aBulletPara);
+            const aTxt = getParagraphPlainText(aBulletPara).trim();
+            const prefix = aTxt.startsWith('a)') ? 'a) ' : 'a. ';
+            if (aTxt.length > 2) {
+              replaceSpanInParagraph(xmlDoc, aBulletPara, 2, aTxt.length, ` ${cleanLines.join('\n')}`);
+            } else {
+              setParagraphTextPreservingStyle(xmlDoc, aBulletPara, `${prefix}${cleanLines.join('\n')}`);
+            }
+            // Remove extra stale continuation lines between "a." and "b."
+            for (let k = aIdx + 1; k < subParas.length; k++) {
+              subParas[k].parentNode?.removeChild(subParas[k]);
+            }
           } else {
-            setParagraphTextPreservingStyle(xmlDoc, nextP, `a. ${cleanLines}`);
+            const colonIdx = text.indexOf(':');
+            if (subParas.length === 0 && colonIdx !== -1 && text.slice(colonIdx + 1).trim().length > 0) {
+              setParagraphValueAfterColon(xmlDoc, pEl, cleanLines.join('\n'));
+            } else {
+              const formattedLines = cleanLines.map((l, idx) => (idx === 0 ? `a. ${l}` : l));
+              populateSubParagraphLines(xmlDoc, pEl, subParas, formattedLines, '120');
+            }
           }
         }
       }
@@ -678,83 +1020,31 @@ function applyStructuralPopulations(
     }
 
     // 15. Observation and Recommendation of SAMD:
-    if (/^15\.\s*Observation and Recommendation of SAMD\s*:?/i.test(text) && nonEmpty(memo.samdObservation)) {
+    if (
+      /^(?:15\.\s*)?(?:Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD|SAMD\s*Observation(?:\s*(?:and|&)\s*Recommendation)?)\s*:?/i.test(
+        text
+      ) &&
+      nonEmpty(memo.samdObservation)
+    ) {
       const obsLines = memo.samdObservation
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
-      if (obsLines.length > 0) {
-        const existingSub: Element[] = [];
-        for (let j = i + 1; j < bodyParas.length; j++) {
-          const subText = getParagraphPlainText(bodyParas[j]).trim();
-          if (/^16\./.test(subText) || /^17\./.test(subText)) break;
-          let node: ChildNode | null = bodyParas[j].previousSibling;
-          let hitTable = false;
-          while (node && node !== pEl) {
-            if (node.nodeType === 1 && (node as Element).localName === 'tbl') {
-              hitTable = true;
-              break;
-            }
-            node = node.previousSibling;
-          }
-          if (hitTable) break;
-          existingSub.push(bodyParas[j]);
+      const subParas = collectContiguousSubParagraphs(pEl);
+      const alreadyTokenized =
+        paraReplacedAnyOf(replacedTokensMap, pEl, ['#samdObservation#', '#samd#', '{{samdObservation}}']) ||
+        subParas.some((sp) =>
+          paraReplacedAnyOf(replacedTokensMap, sp, ['#samdObservation#', '#samd#', '{{samdObservation}}'])
+        );
+      if (!alreadyTokenized && obsLines.length > 0) {
+        // Clear any stale inline text after colon if SAMD points live in sub-paragraphs
+        const colonIdx = text.indexOf(':');
+        if (colonIdx !== -1 && text.slice(colonIdx + 1).trim().length > 0) {
+          setParagraphValueAfterColon(xmlDoc, pEl, '');
         }
-
-        const templateSub = existingSub[0] ?? null;
-        if (existingSub.length > 0) {
-          const firstSub = existingSub[0];
-          setParagraphTextPreservingStyle(xmlDoc, firstSub, obsLines[0]);
-          let insertAfter: Element = firstSub;
-          for (let k = 1; k < obsLines.length; k++) {
-            if (k < existingSub.length) {
-              setParagraphTextPreservingStyle(xmlDoc, existingSub[k], obsLines[k]);
-              insertAfter = existingSub[k];
-            } else {
-              const cloned = templateSub!.cloneNode(true) as Element;
-              setParagraphTextPreservingStyle(xmlDoc, cloned, obsLines[k]);
-              insertAfter.parentNode?.insertBefore(cloned, insertAfter.nextSibling);
-              insertAfter = cloned;
-            }
-          }
-          for (let k = obsLines.length; k < existingSub.length; k++) {
-            existingSub[k].parentNode?.removeChild(existingSub[k]);
-          }
-        } else {
-          let insertAfter: Element = pEl;
-          for (const line of obsLines) {
-            const cloned = xmlDoc.createElementNS(W_NS, 'w:p');
-            const pPr = xmlDoc.createElementNS(W_NS, 'w:pPr');
-            const ind = xmlDoc.createElementNS(W_NS, 'w:ind');
-            ind.setAttribute('w:left', '180');
-            pPr.appendChild(ind);
-            const sp = xmlDoc.createElementNS(W_NS, 'w:spacing');
-            sp.setAttribute('w:before', '15');
-            sp.setAttribute('w:after', '15');
-            pPr.appendChild(sp);
-            cloned.appendChild(pPr);
-
-            const headingRun = directChildren(pEl, 'r')[0];
-            const headingRPr = headingRun ? firstDescendant(headingRun, 'rPr') : null;
-            const rEl = xmlDoc.createElementNS(W_NS, 'w:r');
-            if (headingRPr) {
-              const cleanRPr = headingRPr.cloneNode(true) as Element;
-              for (const tag of ['b', 'bCs', 'u']) {
-                const el = firstDescendant(cleanRPr, tag);
-                if (el) el.parentNode?.removeChild(el);
-              }
-              rEl.appendChild(cleanRPr);
-            }
-            const tEl = xmlDoc.createElementNS(W_NS, 'w:t');
-            setTextNodeValue(tEl, line);
-            rEl.appendChild(tEl);
-            cloned.appendChild(rEl);
-
-            insertAfter.parentNode?.insertBefore(cloned, insertAfter.nextSibling);
-            insertAfter = cloned;
-          }
-        }
+        populateSubParagraphLines(xmlDoc, pEl, subParas, obsLines, '180');
       }
+      continue;
     }
   }
 
@@ -768,7 +1058,7 @@ function applyStructuralPopulations(
       directChildren(tr, 'tc').map((tc) => ({
         tc,
         text: getCellPlainText(tc),
-        hasTokens: directChildren(tc, 'p').some((p) => paragraphsWithTokens.has(p)),
+        hasTokens: cellReplacedAnyToken(replacedTokensMap, tc),
       }))
     );
 
@@ -927,7 +1217,7 @@ function applyStructuralPopulations(
     }
 
     // F. Section 1 Nature of Business single-cell box
-    if (/^1\.\s*Nature of Business\s*:/i.test(tableText) && matrix[0]?.[0] && !matrix[0][0].hasTokens) {
+    if (/^(?:1\.\s*)?Nature of Business\s*:/i.test(tableText) && matrix.length === 1 && matrix[0]?.[0] && !matrix[0][0].hasTokens) {
       if (nonEmpty(ph['#54#'])) {
         setCellTextPreservingFormat(xmlDoc, matrix[0][0].tc, `1. Nature of Business: ${ph['#54#']}`);
       }
@@ -937,20 +1227,34 @@ function applyStructuralPopulations(
     // G. Section 2 Liability Position Table
     if (/Name of the Concern/i.test(tableText) && /Mode of Investment/i.test(tableText)) {
       for (const row of matrix) {
-        if (row.length >= 8 && !row[0].hasTokens && /Funded/i.test(row[1]?.text ?? '') && !/Non/i.test(row[1]?.text ?? '')) {
-          if (nonEmpty(ph['#2#'])) setCellTextPreservingFormat(xmlDoc, row[0].tc, ph['#2#']);
-          if (nonEmpty(ph['#55#'])) setCellTextPreservingFormat(xmlDoc, row[1].tc, `${ph['#55#']}\nFunded`);
-          if (nonEmpty(ph['#56#'])) setCellTextPreservingFormat(xmlDoc, row[2].tc, ph['#56#']);
-          if (nonEmpty(ph['#25#'])) setCellTextPreservingFormat(xmlDoc, row[3].tc, ph['#25#']);
-          if (nonEmpty(ph['#58#'])) setCellTextPreservingFormat(xmlDoc, row[4].tc, ph['#58#']);
-          if (nonEmpty(ph['#59#'])) setCellTextPreservingFormat(xmlDoc, row[5].tc, ph['#59#']);
-          if (nonEmpty(ph['#60#'])) setCellTextPreservingFormat(xmlDoc, row[6].tc, ph['#60#']);
-          if (nonEmpty(bp?.sec2Remarks)) setCellTextPreservingFormat(xmlDoc, row[7].tc, bp!.sec2Remarks);
-        } else if (/^Non\s*Funded$/i.test(row[0]?.text ?? '') && row.length >= 7) {
-          if (!row[row.length - 1].hasTokens && nonEmpty(memo.sec2NonFundedNote)) {
-            setCellTextPreservingFormat(xmlDoc, row[row.length - 1].tc, memo.sec2NonFundedNote);
+        const isFundedRow =
+          row.length >= 8 &&
+          /\bFunded\b/i.test(row[1]?.text ?? '') &&
+          !/Non[-\s]*Funded/i.test(row[1]?.text ?? '');
+        const nonFundedIdx = row.findIndex((c, idx) => idx <= 1 && /^Non[-\s]*Funded$/i.test(c.text.trim()));
+        const isTotalRow = /^Total$/i.test(row[0]?.text.trim() ?? '') && row.length >= 7;
+
+        if (isFundedRow) {
+          if (!row[0].hasTokens && nonEmpty(ph['#2#'])) setCellTextPreservingFormat(xmlDoc, row[0].tc, ph['#2#']);
+          if (!row[1].hasTokens && nonEmpty(ph['#55#'])) setCellTextPreservingFormat(xmlDoc, row[1].tc, `${ph['#55#']}\nFunded`);
+          if (!row[2].hasTokens && ph['#56#'] !== undefined && (nonEmpty(ph['#56#']) || bp !== null)) {
+            setCellTextPreservingFormat(xmlDoc, row[2].tc, ph['#56#'] || '');
           }
-        } else if (/^Total$/i.test(row[0]?.text ?? '') && row.length >= 7) {
+          if (!row[3].hasTokens && nonEmpty(ph['#25#'])) setCellTextPreservingFormat(xmlDoc, row[3].tc, ph['#25#']);
+          if (!row[4].hasTokens && ph['#58#'] !== undefined && (nonEmpty(ph['#58#']) || bp !== null)) {
+            setCellTextPreservingFormat(xmlDoc, row[4].tc, ph['#58#'] || '');
+          }
+          if (!row[5].hasTokens && nonEmpty(ph['#59#'])) setCellTextPreservingFormat(xmlDoc, row[5].tc, ph['#59#']);
+          if (!row[6].hasTokens && nonEmpty(ph['#60#'])) setCellTextPreservingFormat(xmlDoc, row[6].tc, ph['#60#']);
+          if (!row[7].hasTokens && bp !== null) {
+            setCellTextPreservingFormat(xmlDoc, row[7].tc, bp.sec2Remarks || '');
+          }
+        } else if (nonFundedIdx !== -1 && row.length >= 7) {
+          const remarksCell = row[row.length - 1];
+          if (!remarksCell.hasTokens && memo.sec2NonFundedNote !== undefined && (nonEmpty(memo.sec2NonFundedNote) || bp !== null)) {
+            setCellTextPreservingFormat(xmlDoc, remarksCell.tc, memo.sec2NonFundedNote || '');
+          }
+        } else if (isTotalRow) {
           if (!row[1].hasTokens && nonEmpty(ph['#56#'])) setCellTextPreservingFormat(xmlDoc, row[1].tc, ph['#56#']);
           if (!row[2].hasTokens && nonEmpty(ph['#25#'])) setCellTextPreservingFormat(xmlDoc, row[2].tc, ph['#25#']);
           if (!row[3].hasTokens && nonEmpty(ph['#58#'])) setCellTextPreservingFormat(xmlDoc, row[3].tc, ph['#58#']);
@@ -963,10 +1267,10 @@ function applyStructuralPopulations(
 
     // G2. Section 3 Table (Liability with Other Units / Banks/NBFIs)
     if (/Name of the Banks\/NBFIs/i.test(tableText) && /CL Status/i.test(tableText)) {
-      if (bp?.section3Rows && bp.section3Rows.length > 0 && matrix.length > 1) {
+      if (bp !== null && matrix.length > 1) {
         const subTotalIdx = matrix.findIndex((r, idx) => idx > 0 && /sub[-\s]*total|grand\s*total/i.test(r[0]?.text ?? ''));
         const dataEndIdx = subTotalIdx !== -1 ? subTotalIdx : matrix.length;
-        const dataRows = bp.section3Rows
+        const dataRows = (bp.section3Rows || [])
           .filter((r) => !/sub[-\s]*total|grand\s*total/i.test(r.sl) && !/sub[-\s]*total|grand\s*total/i.test(r.nameOfConcern))
           .map((r) => [
             r.sl,
@@ -979,8 +1283,8 @@ function applyStructuralPopulations(
             r.expiryDate,
             r.clStatus,
           ]);
-        if (dataRows.length > 0) {
-          populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, dataEndIdx, dataRows, true);
+        if (dataRows.length > 0 || bp.section3Rows.length === 0) {
+          populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, dataEndIdx, dataRows, true, true);
         }
       }
       continue;
@@ -1007,8 +1311,8 @@ function applyStructuralPopulations(
 
     // G4. Section 5 Table (Legal Action Status)
     if (/Type of Case/i.test(tableText) && /Case No\./i.test(tableText)) {
-      if (bp?.section5Rows && bp.section5Rows.length > 0 && matrix.length > 1) {
-        const rowsData = bp.section5Rows.map((r) => [
+      if (bp !== null && matrix.length > 1) {
+        const rowsData = (bp.section5Rows || []).map((r) => [
           r.sl,
           r.typeOfCase,
           r.caseNo,
@@ -1018,7 +1322,7 @@ function applyStructuralPopulations(
           r.nextDate,
           r.presentStatus,
         ]);
-        populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, matrix.length, rowsData, true);
+        populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, matrix.length, rowsData, true, true);
       }
       continue;
     }
@@ -1055,13 +1359,19 @@ function applyStructuralPopulations(
           1,
           totalIdx,
           bp.section7PrimaryRows.map((r) => [r.particulars, r.value]),
-          false
+          true
         );
       }
-      if (totalIdx !== -1 && nonEmpty(bp?.section7PrimaryTotal)) {
-        const totalRow = matrix[totalIdx];
-        if (totalRow.length >= 2 && !totalRow[1].hasTokens) {
-          setCellTextPreservingFormat(xmlDoc, totalRow[1].tc, bp!.section7PrimaryTotal);
+      if (totalIdx !== -1 && bp !== null) {
+        const refreshedTrs = directChildren(tbl, 'tr');
+        const refreshedTotalTr = refreshedTrs.find((tr) =>
+          /Total value of primary security/i.test(directChildren(tr, 'tc')[0] ? getCellPlainText(directChildren(tr, 'tc')[0]) : '')
+        );
+        if (refreshedTotalTr) {
+          const totalTcs = directChildren(refreshedTotalTr, 'tc');
+          if (totalTcs.length >= 2 && !cellReplacedAnyToken(replacedTokensMap, totalTcs[1])) {
+            setCellTextPreservingFormat(xmlDoc, totalTcs[1], bp.section7PrimaryTotal || '');
+          }
         }
       }
       continue;
@@ -1069,11 +1379,12 @@ function applyStructuralPopulations(
 
     // G7. Section 7 Collateral Valuation Table
     if (/Value of the mortgaged properties/i.test(tableText) || /Lowest Security value Coverage/i.test(tableText)) {
+      const normSched = (s: string) => s.trim().toLowerCase().replace(/[-\s]+0*(\d+)/g, '-$1');
       if (bp?.section7ValuationRows && bp.section7ValuationRows.length > 0) {
         for (const row of matrix) {
           if (row.length === 11) {
-            const sched = row[0].text.trim().toLowerCase();
-            const match = bp.section7ValuationRows.find((v) => v.schedule.trim().toLowerCase() === sched);
+            const sched = normSched(row[0].text);
+            const match = bp.section7ValuationRows.find((v) => normSched(v.schedule) === sched);
             if (match) {
               const vals = [
                 match.origBranchMv,
@@ -1114,13 +1425,14 @@ function applyStructuralPopulations(
 
     // G8. Section 9 Sequence of HO Sanctions Table
     if (/HO Sanction Reference No\./i.test(tableText)) {
-      if (bp?.section9Rows && bp.section9Rows.length > 0 && matrix.length > 1) {
+      if (bp !== null && matrix.length > 1) {
         populateTableDataRowsPreservingFormat(
           xmlDoc,
           tbl,
           1,
           matrix.length,
-          bp.section9Rows.map((r) => [r.sl, r.referenceNo, r.date, r.limit, r.remarks]),
+          (bp.section9Rows || []).map((r) => [r.sl, r.referenceNo, r.date, r.limit, r.remarks]),
+          true,
           true
         );
       }
@@ -1129,13 +1441,13 @@ function applyStructuralPopulations(
 
     // G9. Section 10 Proprietor / Partner / Directors Table
     if (/Name of the Directors/i.test(tableText) && /Share\s*\(%\)/i.test(tableText)) {
-      if (bp?.section10Directors && bp.section10Directors.length > 0 && matrix.length > 1) {
+      if (bp !== null && matrix.length > 1) {
         populateTableDataRowsPreservingFormat(
           xmlDoc,
           tbl,
           1,
           matrix.length,
-          bp.section10Directors.map((d) => [
+          (bp.section10Directors || []).map((d) => [
             d.name,
             d.age,
             d.education,
@@ -1144,6 +1456,7 @@ function applyStructuralPopulations(
             d.experience,
             d.netWorth,
           ]),
+          true,
           true
         );
       }
@@ -1152,19 +1465,20 @@ function applyStructuralPopulations(
 
     // G10. Section 10 Bank / FI / Insurance Directors Table
     if (/Name of the bank\/NBFIs/i.test(tableText) && /Number of Shares/i.test(tableText)) {
-      if (bp?.section10BankDirectors && bp.section10BankDirectors.length > 0 && matrix.length > 1) {
+      if (bp !== null && matrix.length > 1) {
         populateTableDataRowsPreservingFormat(
           xmlDoc,
           tbl,
           1,
           matrix.length,
-          bp.section10BankDirectors.map((d) => [
+          (bp.section10BankDirectors || []).map((d) => [
             d.name,
             d.bankNbfi,
             d.designation,
             d.sharePct,
             d.numShares,
           ]),
+          true,
           true
         );
       }
@@ -1173,9 +1487,9 @@ function applyStructuralPopulations(
 
     // G11. Section 11 Financials Table
     if (/Gross Sales/i.test(tableText) && /Total Asset/i.test(tableText) && /Net Worth/i.test(tableText)) {
-      if (matrix.length > 1) {
+      if (bp !== null && matrix.length > 1) {
         const finData =
-          bp?.section11Rows && bp.section11Rows.length > 0
+          bp.section11Rows && bp.section11Rows.length > 0
             ? bp.section11Rows.map((r) => [
                 r.year,
                 r.grossSales,
@@ -1185,12 +1499,10 @@ function applyStructuralPopulations(
                 r.totalLiabilities,
                 r.netWorth,
               ])
-            : bp?.section11FinancialsNote
+            : bp.section11FinancialsNote
               ? [['', bp.section11FinancialsNote, '', '', '', '', '']]
               : [];
-        if (finData.length > 0) {
-          populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, matrix.length, finData, true);
-        }
+        populateTableDataRowsPreservingFormat(xmlDoc, tbl, 1, matrix.length, finData, true, true);
       }
       continue;
     }
@@ -1199,7 +1511,7 @@ function applyStructuralPopulations(
     if (/Settlement\/Exit amount/i.test(tableText) && /Down Payment/i.test(tableText)) {
       for (const row of matrix) {
         if (row.length < 2) continue;
-        const label = row[row.length - 2].text;
+        const label = row[row.length - 2].text.replace(/\s*:\s*$/, '').trim();
         const val = row[row.length - 1];
         if (val.hasTokens) continue;
         const dt = nonEmpty(ph['#68#']) || '#68#';
@@ -1210,7 +1522,7 @@ function applyStructuralPopulations(
           setCellTextPreservingFormat(xmlDoc, val.tc, `Down-payment of Tk. ${ph['#35#']} Million is kept in ${ac} A/C ${ac}`);
         } else if (/^Waiver$/i.test(label) && nonEmpty(ph['#4#'])) {
           setCellTextPreservingFormat(xmlDoc, val.tc, `Tk. ${ph['#4#']} million as on ${dt}`);
-        } else if (/Settlement\/Exit amount/i.test(label) && nonEmpty(ph['#27#'])) {
+        } else if (/Settlement\s*\/\s*Exit amount/i.test(label) && nonEmpty(ph['#27#'])) {
           setCellTextPreservingFormat(xmlDoc, val.tc, `Tk. ${ph['#27#']} Million as on ${dt}`);
         } else if (/^Settlement period$/i.test(label) && nonEmpty(ph['#28#'])) {
           setCellTextPreservingFormat(xmlDoc, val.tc, ph['#28#']);
@@ -1230,7 +1542,14 @@ function applyStructuralPopulations(
       if (labelCell.text.trim() === ':' && row.length >= 3) {
         labelCell = row[row.length - 3];
       }
-      const label = labelCell.text.trim();
+      const rawLabel = labelCell.text.trim();
+      if (!rawLabel) continue;
+      // Normalize optional leading serial ("a. ", "1. ") and trailing ":" + collapse whitespace
+      const label = rawLabel
+        .replace(/^(?:[a-z]\.|\d+\.)\s+/i, '')
+        .replace(/\s*:\s*$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
       if (!label) continue;
 
       const sp = bp?.section10Particulars;
@@ -1263,14 +1582,18 @@ function applyStructuralPopulations(
       else if (/First Date of Classification/i.test(label)) trySet(nonEmpty(sp?.firstDateOfClassification));
       else if (/^(Account\s*No\.?|A\/C\s*No\.?)$/i.test(label)) trySet(nonEmpty(ph['#2#']));
       else if (/^(Branch|Branch\s*Name)$/i.test(label)) trySet(nonEmpty(ph['#3#']));
-      else if (/^(Proposal\s*Date|Sanction\s*Date|Memo\s*Date)$/i.test(label)) trySet(nonEmpty(ph['#1#']));
+      else if (/^(Proposal\s*Date|Sanction\s*Date|Memo\s*Date|Dated)$/i.test(label)) trySet(nonEmpty(ph['#1#']));
       else if (/^(Proposed\s*Waiver|Waiver\s*Amount)$/i.test(label)) trySet(nonEmpty(ph['#4#']));
       else if (/^(Settlement\s*Amount|Exit\s*Amount)$/i.test(label)) trySet(nonEmpty(ph['#27#']));
       else if (/^(Settlement\s*Period|Settlement\s*Deadline)$/i.test(label)) trySet(nonEmpty(ph['#28#']));
-      else if (/^Source of Repayment$/i.test(label)) trySet(nonEmpty(memo.sourceOfRepayment));
-      else if (/^Branch Visit Report$/i.test(label)) trySet(nonEmpty(memo.branchVisitReport));
-      else if (/^Observation and Recommendation of SAMD$/i.test(label)) trySet(nonEmpty(memo.samdObservation));
-      else if (/^Justification of The Proposed Facility$/i.test(label)) trySet(nonEmpty(memo.justificationLines));
+      else if (/^(?:8\.\s*)?Source of Repayment$/i.test(label)) trySet(nonEmpty(memo.sourceOfRepayment));
+      else if (/^(?:12\.\s*)?Branch Visit Report$/i.test(label)) trySet(nonEmpty(memo.branchVisitReport));
+      else if (/^(?:13\.\s*)?Recommendation of (?:the )?Branch$/i.test(label)) trySet(nonEmpty(memo.sec13BranchRecommendation));
+      else if (/^(?:14\.\s*)?Recommendation of (?:Internal Control|IC\s*&?\s*CD|ICCD)/i.test(label)) {
+        trySet(nonEmpty(memo.sec14IccdRecommendation));
+      } else if (/^(?:15\.\s*)?Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD$/i.test(label)) {
+        trySet(nonEmpty(memo.samdObservation));
+      } else if (/^Justification of (?:the )?Proposed Facility$/i.test(label)) trySet(nonEmpty(memo.justificationLines));
     }
   }
 }
@@ -1294,7 +1617,7 @@ export async function inspectDocxTemplate(
   }
 
   const parser = new DOMParser();
-  const tokenRegex = /(#\d+#|#[a-zA-Z][a-zA-Z0-9_]*#|\{\{[a-zA-Z0-9_.]+\}\})/g;
+  const tokenRegex = /(#\d+#|#[a-zA-Z][a-zA-Z0-9_]*#|\{\{[a-zA-Z0-9_.]+\}\}|\[[a-zA-Z][a-zA-Z0-9_]*\])/g;
   const detectedSet = new Set<string>();
   const previewSections: TemplatePreviewBlock[] = [];
 
@@ -1376,21 +1699,21 @@ export async function populateDocxTemplate(
     const xmlDeclMatch = origXmlStr.match(/^<\?xml[^?]*\?>\s*/i);
     const xmlDoc = parser.parseFromString(origXmlStr, 'application/xml');
 
-    const paragraphsWithTokens = new Set<Element>();
+    const replacedTokensMap = new Map<Element, Set<string>>();
     const allParagraphs = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'p'));
 
     for (const pEl of allParagraphs) {
       const pText = getParagraphPlainText(pEl);
       if (hasAnyKnownToken(pText, allTokenKeys)) {
         const replaced = replaceTokensInParagraph(xmlDoc, pEl, allTokenMap);
-        if (replaced) {
-          paragraphsWithTokens.add(pEl);
+        if (replaced.size > 0) {
+          replacedTokensMap.set(pEl, replaced);
         }
       }
     }
 
     if (xp === 'word/document.xml') {
-      applyStructuralPopulations(xmlDoc, memo, paragraphsWithTokens);
+      applyStructuralPopulations(xmlDoc, memo, replacedTokensMap);
     }
 
     let serialized = serializer.serializeToString(xmlDoc);
@@ -1404,6 +1727,155 @@ export async function populateDocxTemplate(
     type: 'blob',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   });
+}
+
+function normalizeVerifyText(str: string): string {
+  return str.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Verifies that all populated memo content from the central state is actually written
+ * into the generated .docx ZIP XML before delivering the downloadable file.
+ */
+export async function verifyPopulatedDocxBlob(
+  docxBlob: Blob,
+  memo: ResolvedICMemo,
+  _docType: MemoDocType,
+  activeTemplate: MemoTemplateRecord | null
+): Promise<{ verified: boolean; missingLabels: string[] }> {
+  const zip = await JSZip.loadAsync(docxBlob);
+  const parser = new DOMParser();
+
+  const xmlPaths = Object.keys(zip.files).filter((p) =>
+    /^word\/(document|header\d*|footer\d*)\.xml$/i.test(p)
+  );
+  const chunks: string[] = [];
+  for (const xp of xmlPaths) {
+    const xmlStr = await zip.files[xp].async('string');
+    const xmlDoc = parser.parseFromString(xmlStr, 'application/xml');
+    const pEls = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'p'));
+    for (const pEl of pEls) {
+      const t = getParagraphPlainText(pEl).trim();
+      if (t) chunks.push(t);
+    }
+  }
+  const exportedText = normalizeVerifyText(chunks.join('\n'));
+
+  const containsSnippet = (val: string): boolean => {
+    const firstLine = val
+      .split('\n')
+      .map((l) => l.trim())
+      .find(Boolean);
+    if (!firstLine) return true;
+    const normLine = normalizeVerifyText(firstLine);
+    const probe = normLine.length > 48 ? normLine.slice(0, 48).trim() : normLine;
+    return exportedText.includes(probe);
+  };
+
+  // For uploaded templates, inspect template paragraphs once to know which headings/tokens exist in that template
+  let tplParagraphs: string[] = [];
+  let templateText = '';
+  if (activeTemplate) {
+    const tplZip = await JSZip.loadAsync(activeTemplate.bytes);
+    const tplChunks: string[] = [];
+    for (const xp of Object.keys(tplZip.files).filter((p) =>
+      /^word\/(document|header\d*|footer\d*)\.xml$/i.test(p)
+    )) {
+      const s = await tplZip.files[xp].async('string');
+      const d = parser.parseFromString(s, 'application/xml');
+      for (const pEl of Array.from(d.getElementsByTagNameNS(W_NS, 'p'))) {
+        const t = normalizeVerifyText(getParagraphPlainText(pEl));
+        if (t) tplChunks.push(t);
+      }
+    }
+    tplParagraphs = tplChunks;
+    templateText = tplChunks.join('\n');
+  }
+
+  const missingLabels: string[] = [];
+  const checkBuiltIn = !activeTemplate;
+
+  const checkNarrative = (
+    label: string,
+    value: string,
+    headingRegex: RegExp,
+    tokens: string[]
+  ) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const expected =
+      checkBuiltIn ||
+      tplParagraphs.some((p) => headingRegex.test(p)) ||
+      tokens.some((tk) => templateText.includes(tk));
+    if (expected && !containsSnippet(trimmed)) {
+      missingLabels.push(label);
+    }
+  };
+
+  const ph = memo.placeholders;
+  checkNarrative(
+    'Justification of The Proposed Facility',
+    memo.justificationLines,
+    /^(?:\d+\.\s*)?Justification\s+of\s+(?:the\s+)?Proposed\s+Facility\b/i,
+    ['#51#', '#justification#', '{{justification}}', '[justification]']
+  );
+  checkNarrative(
+    '1. Nature of Business',
+    ph['#54#'] || '',
+    /^(?:1\.\s*)?Nature\s+of\s+Business\s*:?/i,
+    ['#54#', '#natureOfBusiness#', '{{natureOfBusiness}}', '[natureOfBusiness]']
+  );
+  checkNarrative(
+    '8. Source of Repayment',
+    memo.sourceOfRepayment,
+    /^(?:8\.\s*)?Source\s+of\s+Repayment\s*:?/i,
+    ['#sourceOfRepayment#', '#sec8SourceOfRepayment#', '{{sourceOfRepayment}}', '[sourceOfRepayment]']
+  );
+  checkNarrative(
+    '12. Branch Visit Report',
+    memo.branchVisitReport,
+    /^(?:12\.\s*)?Branch\s+Visit\s+Report\s*:?/i,
+    ['#branchVisit#', '#branchVisitReport#', '{{branchVisit}}', '{{branchVisitReport}}', '[branchVisit]', '[branchVisitReport]']
+  );
+  checkNarrative(
+    '13. Recommendation of The Branch',
+    memo.sec13BranchRecommendation,
+    /^(?:13\.\s*)?Recommendation\s+of\s+(?:the\s+)?Branch\b/i,
+    ['#branchRecommendation#', '#sec13BranchRecommendation#', '{{branchRecommendation}}', '{{sec13BranchRecommendation}}']
+  );
+  checkNarrative(
+    '14. Recommendation of ICCD',
+    memo.sec14IccdRecommendation,
+    /^(?:14\.\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)\b/i,
+    ['#iccdRecommendation#', '#sec14IccdRecommendation#', '{{iccdRecommendation}}', '{{sec14IccdRecommendation}}']
+  );
+  checkNarrative(
+    '15. Observation and Recommendation of SAMD',
+    memo.samdObservation,
+    /^(?:15\.\s*)?(?:Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD|SAMD\s*Observation(?:\s*(?:and|&)\s*Recommendation)?)\b/i,
+    ['#samdObservation#', '#samd#', '{{samdObservation}}']
+  );
+
+  if (checkBuiltIn) {
+    for (const [code, lbl] of [
+      ['#1#', 'Proposal Date'],
+      ['#2#', 'Account Number / Client'],
+      ['#4#', 'Waiver Amount'],
+      ['#25#', 'NET Outstanding'],
+      ['#27#', 'Settlement Amount'],
+      ['#28#', 'Settlement Period'],
+    ] as const) {
+      const val = (ph[code] || '').trim();
+      if (val && !containsSnippet(val)) {
+        missingLabels.push(`${lbl} (${code})`);
+      }
+    }
+  }
+
+  return {
+    verified: missingLabels.length === 0,
+    missingLabels,
+  };
 }
 
 function applyPreviewReplacements(text: string, tokenMap: Record<string, string>): string {
@@ -1431,17 +1903,17 @@ export function renderTemplatePreviewBlocks(
   return template.previewSections.map((block) => {
     if (block.type === 'paragraph') {
       let text = applyPreviewReplacements(block.text || '', allTokenMap);
-      if (/^1\.\s*Nature of Business\s*:/i.test(text) && nonEmpty(ph['#54#']) && !block.text?.includes('#54#')) {
+      if (/^(?:1\.\s*)?Nature of Business\s*:/i.test(text) && nonEmpty(ph['#54#']) && !block.text?.includes('#54#')) {
         text = `1. Nature of Business: ${ph['#54#']}`;
-      } else if (/^8\.\s*Source of Repayment\s*:/i.test(text) && nonEmpty(memo.sourceOfRepayment)) {
+      } else if (/^(?:8\.\s*)?Source of Repayment\s*:/i.test(text) && nonEmpty(memo.sourceOfRepayment)) {
         text = `8. Source of Repayment: ${memo.sourceOfRepayment}`;
-      } else if (/^12\.\s*Branch Visit Report\s*:/i.test(text) && nonEmpty(memo.branchVisitReport)) {
+      } else if (/^(?:12\.\s*)?Branch Visit Report\s*:/i.test(text) && nonEmpty(memo.branchVisitReport)) {
         text = `12. Branch Visit Report: ${memo.branchVisitReport}`;
-      } else if (/^13\.\s*Recommendation of The Branch\s*:/i.test(text) && nonEmpty(memo.sec13BranchRecommendation)) {
+      } else if (/^(?:13\.\s*)?Recommendation of (?:the )?Branch\s*:/i.test(text) && nonEmpty(memo.sec13BranchRecommendation)) {
         text = `${text}\n${memo.sec13BranchRecommendation}`;
-      } else if (/^14\.\s*Recommendation of Internal Control/i.test(text) && nonEmpty(memo.sec14IccdRecommendation)) {
+      } else if (/^(?:14\.\s*)?Recommendation of (?:Internal Control|IC\s*&?\s*CD|ICCD)/i.test(text) && nonEmpty(memo.sec14IccdRecommendation)) {
         text = `14. Recommendation of Internal Control & Compliance Division: ${memo.sec14IccdRecommendation}`;
-      } else if (/^15\.\s*Observation and Recommendation of SAMD\s*:?/i.test(text) && nonEmpty(memo.samdObservation)) {
+      } else if (/^(?:15\.\s*)?(?:Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD|SAMD\s*Observation)/i.test(text) && nonEmpty(memo.samdObservation)) {
         text = `15. Observation and Recommendation of SAMD:\n${memo.samdObservation}`;
       }
       return { type: 'paragraph', text };

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from 'lucide-react';
 import { ICMemoPreview } from './components/ICMemoPreview';
 import { LandingScreen } from './components/LandingScreen';
 import { ManualInputsTab } from './components/ManualInputsTab';
@@ -23,12 +23,14 @@ import {
   parseOverduePdf,
   parsePartyPerformancePdf,
   prepareBranchProposalSource,
+  prepareMemoDocumentSource,
   warmBranchProposalSource,
 } from './parsers/documentParsers';
 import type {
   AiSectionsData,
   AppliedSyncState,
   BatchScrutinyState,
+  BranchProposalData,
   BranchProposalSource,
   DocumentKey,
   DocumentUploadMeta,
@@ -43,8 +45,14 @@ import type {
   StageMemoDocType,
   StageMemoInputs,
   StageScrutinySectionKey,
+  StageSourceAuditResult,
+  StageSourceUploadState,
 } from './types/memo';
-import { loadCentralCaseState, saveCentralCaseState } from './utils/caseStorage';
+import {
+  clearCentralCaseState,
+  loadCentralCaseState,
+  saveCentralCaseState,
+} from './utils/caseStorage';
 import {
   deleteTemplateRecord,
   loadAllTemplateRecords,
@@ -308,6 +316,42 @@ const DOC_FILE_PREFIX: Record<MemoDocType, string> = {
   sanction: 'Sanction',
 };
 
+const createInitialStageSourceUploads = (): Record<StageMemoDocType, StageSourceUploadState> => ({
+  mec: {
+    uploaded: false,
+    fileName: '',
+    sourceType: 'ic_memo',
+    processing: false,
+    stage: null,
+    error: null,
+    extractedAt: null,
+    extractedFieldCount: 0,
+    audit: null,
+  },
+  board: {
+    uploaded: false,
+    fileName: '',
+    sourceType: 'mec_memo',
+    processing: false,
+    stage: null,
+    error: null,
+    extractedAt: null,
+    extractedFieldCount: 0,
+    audit: null,
+  },
+  sanction: {
+    uploaded: false,
+    fileName: '',
+    sourceType: 'board_memo',
+    processing: false,
+    stage: null,
+    error: null,
+    extractedAt: null,
+    extractedFieldCount: 0,
+    audit: null,
+  },
+});
+
 export default function App() {
   const [entered, setEntered] = useState(false);
   const [activeTab, setActiveTab] = useState<MemoTabKey>('manual');
@@ -349,11 +393,18 @@ export default function App() {
   const [stageBatchScrutiny, setStageBatchScrutiny] = useState<StageBatchScrutinyState>(
     INITIAL_STAGE_BATCH_SCRUTINY
   );
+  const [stageSourceUploads, setStageSourceUploads] = useState<
+    Record<StageMemoDocType, StageSourceUploadState>
+  >(createInitialStageSourceUploads);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearingCaseData, setClearingCaseData] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const serverCachedSourceIdRef = useRef<string | null>(null);
+  const stageSourceFilesRef = useRef<Partial<Record<StageMemoDocType, File>>>({});
+  const stageServerCachedSourceIdsRef = useRef<Partial<Record<StageMemoDocType, string>>>({});
   const cacheWarmPromiseRef = useRef<{ sourceId?: string; promise: Promise<void> } | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
   const stageBatchAbortRef = useRef<AbortController | null>(null);
@@ -369,6 +420,7 @@ export default function App() {
     stageInputs: StageMemoInputs;
     stageAiSections: StageAiSectionsData;
     stageManualEditedSections: Partial<Record<StageScrutinySectionKey, boolean>>;
+    stageSourceUploads: Record<StageMemoDocType, StageSourceUploadState>;
   }>({
     extractedDocs: INITIAL_EXTRACTED_DOCS,
     manualInputs: INITIAL_MANUAL_INPUTS,
@@ -378,6 +430,7 @@ export default function App() {
     stageInputs: INITIAL_STAGE_INPUTS,
     stageAiSections: INITIAL_STAGE_AI_SECTIONS,
     stageManualEditedSections: {},
+    stageSourceUploads: createInitialStageSourceUploads(),
   });
   const docMetasRef = useRef<Record<DocumentKey, DocumentUploadMeta>>(INITIAL_DOC_METAS);
 
@@ -394,18 +447,39 @@ export default function App() {
   );
 
   const resolvedMecMemo = useMemo(
-    () => resolveStageMemo('mec', resolvedICMemo, stageInputs, stageAiSections),
-    [resolvedICMemo, stageInputs, stageAiSections]
+    () =>
+      resolveStageMemo(
+        'mec',
+        resolvedICMemo,
+        stageInputs,
+        stageAiSections,
+        stageManualEditedSections
+      ),
+    [resolvedICMemo, stageInputs, stageAiSections, stageManualEditedSections]
   );
 
   const resolvedBoardMemo = useMemo(
-    () => resolveStageMemo('board', resolvedICMemo, stageInputs, stageAiSections),
-    [resolvedICMemo, stageInputs, stageAiSections]
+    () =>
+      resolveStageMemo(
+        'board',
+        resolvedICMemo,
+        stageInputs,
+        stageAiSections,
+        stageManualEditedSections
+      ),
+    [resolvedICMemo, stageInputs, stageAiSections, stageManualEditedSections]
   );
 
   const resolvedSanctionMemo = useMemo(
-    () => resolveStageMemo('sanction', resolvedICMemo, stageInputs, stageAiSections),
-    [resolvedICMemo, stageInputs, stageAiSections]
+    () =>
+      resolveStageMemo(
+        'sanction',
+        resolvedICMemo,
+        stageInputs,
+        stageAiSections,
+        stageManualEditedSections
+      ),
+    [resolvedICMemo, stageInputs, stageAiSections, stageManualEditedSections]
   );
 
   const [appliedSnapshot, setAppliedSnapshot] = useState<AppliedSyncState>(() => ({
@@ -429,6 +503,7 @@ export default function App() {
       stageInputs,
       stageAiSections,
       stageManualEditedSections,
+      stageSourceUploads,
     };
   }, [
     extractedDocs,
@@ -439,11 +514,28 @@ export default function App() {
     stageInputs,
     stageAiSections,
     stageManualEditedSections,
+    stageSourceUploads,
   ]);
 
   useEffect(() => {
     docMetasRef.current = docMetas;
   }, [docMetas]);
+
+  const serializeCaseForStorage = () => {
+    const cur = caseRef.current;
+    const cleanUploads: Partial<Record<StageMemoDocType, StageSourceUploadState>> = {};
+    for (const k of ['mec', 'board', 'sanction'] as StageMemoDocType[]) {
+      cleanUploads[k] = {
+        ...cur.stageSourceUploads[k],
+        processing: false,
+        stage: null,
+      };
+    }
+    return {
+      ...cur,
+      stageSourceUploads: cleanUploads,
+    };
+  };
 
   const persistCentralCaseNow = async (immediate = false) => {
     if (persistTimerRef.current !== null) {
@@ -451,12 +543,12 @@ export default function App() {
       persistTimerRef.current = null;
     }
     if (immediate) {
-      await saveCentralCaseState(caseRef.current, docMetasRef.current);
+      await saveCentralCaseState(serializeCaseForStorage(), docMetasRef.current);
       return;
     }
     persistTimerRef.current = window.setTimeout(() => {
       persistTimerRef.current = null;
-      void saveCentralCaseState(caseRef.current, docMetasRef.current);
+      void saveCentralCaseState(serializeCaseForStorage(), docMetasRef.current);
     }, 150);
   };
 
@@ -585,6 +677,28 @@ export default function App() {
     });
     void loadCentralCaseState().then((saved) => {
       if (!saved || caseDirtyRef.current) return;
+      const defaultStageUploads = createInitialStageSourceUploads();
+      const hydratedStageUploads: Record<StageMemoDocType, StageSourceUploadState> = {
+        mec: {
+          ...defaultStageUploads.mec,
+          ...(saved.stageSourceUploads?.mec || {}),
+          processing: false,
+          stage: null,
+        },
+        board: {
+          ...defaultStageUploads.board,
+          ...(saved.stageSourceUploads?.board || {}),
+          processing: false,
+          stage: null,
+        },
+        sanction: {
+          ...defaultStageUploads.sanction,
+          ...(saved.stageSourceUploads?.sanction || {}),
+          processing: false,
+          stage: null,
+        },
+      };
+
       const hydrated = {
         extractedDocs: { ...INITIAL_EXTRACTED_DOCS, ...(saved.extractedDocs || {}) },
         manualInputs: { ...INITIAL_MANUAL_INPUTS, ...(saved.manualInputs || {}) },
@@ -594,6 +708,7 @@ export default function App() {
         stageInputs: { ...INITIAL_STAGE_INPUTS, ...(saved.stageInputs || {}) },
         stageAiSections: { ...INITIAL_STAGE_AI_SECTIONS, ...(saved.stageAiSections || {}) },
         stageManualEditedSections: saved.stageManualEditedSections || {},
+        stageSourceUploads: hydratedStageUploads,
       };
       caseRef.current = hydrated;
       setExtractedDocs(hydrated.extractedDocs);
@@ -604,6 +719,7 @@ export default function App() {
       setStageInputs(hydrated.stageInputs);
       setStageAiSections(hydrated.stageAiSections);
       setStageManualEditedSections(hydrated.stageManualEditedSections);
+      setStageSourceUploads(hydrated.stageSourceUploads);
 
       if (saved.docUploadedFlags) {
         setDocMetasSync((prev) => {
@@ -1486,11 +1602,531 @@ export default function App() {
     void persistCentralCaseNow(false);
   };
 
+  const setStageSourceUploadsSync = (
+    updater:
+      | Record<StageMemoDocType, StageSourceUploadState>
+      | ((
+          prev: Record<StageMemoDocType, StageSourceUploadState>
+        ) => Record<StageMemoDocType, StageSourceUploadState>)
+  ) => {
+    const next =
+      typeof updater === 'function' ? updater(caseRef.current.stageSourceUploads) : updater;
+    caseRef.current = { ...caseRef.current, stageSourceUploads: next };
+    setStageSourceUploads(next);
+  };
+
+  const handleClearStageSource = (docType: StageMemoDocType) => {
+    delete stageSourceFilesRef.current[docType];
+    delete stageServerCachedSourceIdsRef.current[docType];
+    const defaults = createInitialStageSourceUploads();
+    setStageSourceUploadsSync((prev) => ({
+      ...prev,
+      [docType]: defaults[docType],
+    }));
+    void persistCentralCaseNow(true);
+  };
+
+  const handleClearAllData = async () => {
+    setClearingCaseData(true);
+    try {
+      batchAbortRef.current?.abort();
+      stageBatchAbortRef.current?.abort();
+      batchAbortRef.current = null;
+      stageBatchAbortRef.current = null;
+
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+
+      serverCachedSourceIdRef.current = null;
+      stageSourceFilesRef.current = {};
+      stageServerCachedSourceIdsRef.current = {};
+      cacheWarmPromiseRef.current = null;
+      caseDirtyRef.current = false;
+
+      const freshStageUploads = createInitialStageSourceUploads();
+      const emptyCase = {
+        extractedDocs: INITIAL_EXTRACTED_DOCS,
+        manualInputs: INITIAL_MANUAL_INPUTS,
+        aiSections: INITIAL_AI_SECTIONS,
+        overrides: {},
+        manualEditedSections: {},
+        stageInputs: INITIAL_STAGE_INPUTS,
+        stageAiSections: INITIAL_STAGE_AI_SECTIONS,
+        stageManualEditedSections: {},
+        stageSourceUploads: freshStageUploads,
+      };
+      caseRef.current = emptyCase;
+
+      setDocMetasSync(INITIAL_DOC_METAS);
+      setExtractedDocs(INITIAL_EXTRACTED_DOCS);
+      setManualInputs(INITIAL_MANUAL_INPUTS);
+      setAiSections(INITIAL_AI_SECTIONS);
+      setOverrides({});
+      setManualEditedSections({});
+      setStageInputs(INITIAL_STAGE_INPUTS);
+      setStageAiSections(INITIAL_STAGE_AI_SECTIONS);
+      setStageManualEditedSections({});
+      setStageSourceUploads(freshStageUploads);
+      setBranchProposalFile(null);
+      setScrutinizingSection(null);
+      setScrutinizingStageSection(null);
+      setBatchScrutiny(INITIAL_BATCH_SCRUTINY);
+      setStageBatchScrutiny(INITIAL_STAGE_BATCH_SCRUTINY);
+      setAiError(null);
+
+      await clearCentralCaseState();
+
+      const emptyMemo = resolveICMemo(
+        INITIAL_EXTRACTED_DOCS,
+        INITIAL_MANUAL_INPUTS,
+        INITIAL_AI_SECTIONS,
+        {},
+        {}
+      );
+      setAppliedSnapshot({
+        appliedAt: null,
+        version: 0,
+        memo: emptyMemo,
+        stageInputs: INITIAL_STAGE_INPUTS,
+        stageAiSections: INITIAL_STAGE_AI_SECTIONS,
+      });
+      setHasPendingChanges(false);
+      setApplySignal((s) => s + 1);
+      setApplyNotice(
+        'All case data has been cleared. Default document templates and software settings remain preserved.'
+      );
+      setShowClearConfirm(false);
+    } finally {
+      setClearingCaseData(false);
+    }
+  };
+
+  const handleUploadStageSource = async (docType: StageMemoDocType, file: File) => {
+    stageSourceFilesRef.current[docType] = file;
+    setAiError(null);
+    setStageSourceUploadsSync((prev) => ({
+      ...prev,
+      [docType]: {
+        ...prev[docType],
+        uploaded: false,
+        fileName: file.name,
+        processing: true,
+        stage: 'Preparing document for AI reading & scrutiny...',
+        error: null,
+      },
+    }));
+
+    try {
+      const prepared = await prepareMemoDocumentSource(file, (stageMsg) => {
+        setStageSourceUploadsSync((prev) => ({
+          ...prev,
+          [docType]: {
+            ...prev[docType],
+            stage: stageMsg,
+          },
+        }));
+      });
+
+      setStageSourceUploadsSync((prev) => ({
+        ...prev,
+        [docType]: {
+          ...prev[docType],
+          stage: 'Running Gemini AI extraction, cross-verification & formatting...',
+        },
+      }));
+
+      const cachedId = prepared.sourceId;
+      const existingSnapshot = caseRef.current;
+      const currentResolved = resolveICMemo(
+        existingSnapshot.extractedDocs,
+        existingSnapshot.manualInputs,
+        existingSnapshot.aiSections,
+        existingSnapshot.overrides,
+        existingSnapshot.manualEditedSections
+      );
+
+      const response = await fetch('/api/gemini/extract-stage-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetDocType: docType,
+          sourceId: cachedId,
+          memoSource: prepared,
+          stageInputs: existingSnapshot.stageInputs,
+          existingContext: { placeholders: currentResolved.placeholders },
+        }),
+      });
+
+      const data = await parseJsonResponse<{
+        sourceId?: string;
+        fileName?: string;
+        extracted?: {
+          placeholders?: Array<{ key: string; value: string }>;
+          manualInputs?: Partial<ManualInputsData>;
+          extractedStageInputs?: Partial<StageMemoInputs>;
+          narratives?: {
+            justification?: string;
+            sec1NatureOfBusiness?: string;
+            sec8SourceOfRepayment?: string;
+            clientPrayer?: string;
+            branchVisit?: string;
+            sec13BranchRecommendation?: string;
+            sec14IccdRecommendation?: string;
+            samdObservation?: string;
+            carriedMecIcRecommendation?: string;
+            carriedBoardMecRecommendation?: string;
+          };
+          structuredTables?: {
+            sec2Limit?: string;
+            sec2Validity?: string;
+            sec2Remarks?: string;
+            sec2NonFundedNote?: string;
+            section3Rows?: BranchProposalData['section3Rows'];
+            sec4CibDate?: string;
+            section4Rows?: BranchProposalData['section4Rows'];
+            sec5StatusNote?: string;
+            section5Rows?: BranchProposalData['section5Rows'];
+            sec6StatusNote?: string;
+            section6Rows?: BranchProposalData['section6Rows'];
+            sec7PrimaryNote?: string;
+            sec7PrimaryTotal?: string;
+            sec7CollateralNote?: string;
+            sec7CollateralSchedules?: string[];
+            sec7CoveragePct?: string;
+            sec7OthersNote?: string;
+            section9Rows?: BranchProposalData['section9Rows'];
+            sec10ParticularsPairs?: Array<{ key: string; value: string }>;
+            section10Directors?: BranchProposalData['section10Directors'];
+            sec11FinancialsNote?: string;
+            section11Financials?: BranchProposalData['section11Rows'];
+            previousBoardDecisions?: string;
+          };
+          targetStageSections?: Partial<Record<StageScrutinySectionKey, string>>;
+          auditFindings?: StageSourceAuditResult;
+        };
+      }>(response, 'Stage memo AI extraction failed');
+
+      if (data.sourceId) {
+        stageServerCachedSourceIdsRef.current[docType] = data.sourceId;
+      }
+
+      const ext = data.extracted ?? {};
+      let countExtracted = 0;
+
+      // 1. Placeholders -> overrides (so uploaded finalized memo values preserve 100% accuracy across all tabs)
+      const nextOverrides: Record<string, string> = { ...caseRef.current.overrides };
+      for (const item of ext.placeholders || []) {
+        const code = (item?.key || '').trim();
+        const val = (item?.value || '').trim();
+        if (code && val) {
+          nextOverrides[code] = val;
+          countExtracted++;
+        }
+      }
+      setOverridesSync(nextOverrides);
+
+      // 2. Manual Inputs
+      if (ext.manualInputs) {
+        setManualInputsSync((prev) => {
+          const next = { ...prev };
+          (Object.keys(ext.manualInputs || {}) as Array<keyof ManualInputsData>).forEach((k) => {
+            const v = (ext.manualInputs?.[k] ?? '').trim();
+            if (v) {
+              next[k] = v;
+              countExtracted++;
+            }
+          });
+          return next;
+        });
+      }
+
+      // 3. Stage Inputs (fill empty stage order/date fields if extracted from uploaded doc)
+      if (ext.extractedStageInputs) {
+        setStageInputsSync((prev) => {
+          const next = { ...prev };
+          (Object.keys(ext.extractedStageInputs || {}) as Array<keyof StageMemoInputs>).forEach((k) => {
+            const v = (ext.extractedStageInputs?.[k] ?? '').trim();
+            if (v && !next[k].trim()) {
+              next[k] = v;
+              countExtracted++;
+            }
+          });
+          return next;
+        });
+      }
+
+      // 4. Structured Tables -> BranchProposalData
+      const st = ext.structuredTables;
+      if (st) {
+        const sec10Map: Record<string, string> = {};
+        for (const kv of st.sec10ParticularsPairs || []) {
+          if (kv?.key && kv?.value && kv.value.trim()) {
+            sec10Map[kv.key.trim()] = kv.value.trim();
+            countExtracted++;
+          }
+        }
+        const emptyParticulars = {
+          nameOfClient: '',
+          uniqueCustomerId: '',
+          awcdMsdAccount: '',
+          businessTypeNature: '',
+          businessManagementType: '',
+          clientType: '',
+          keyPersonPhone: '',
+          address: '',
+          officeBusinessAddress: '',
+          factoryAddress: '',
+          purposeOfInvestment: '',
+          limitOfInvestment: '',
+          modeOfInvestment: '',
+          lastVisitDate: '',
+          stockPosition: '',
+          fixedAsset: '',
+          businessNetWorth: '',
+          insuranceCoverage: '',
+          tradeLicenseValidity: '',
+          otherRegulatoryDocuments: '',
+          dateOfOriginalInvestment: '',
+          firstDisbursementManager: '',
+          firstDateOfClassification: '',
+        };
+        setExtractedDocsSync((prev) => {
+          const curBp = prev.branchProposal;
+          const nextBp: BranchProposalData = {
+            referenceNo: nextOverrides['#64#'] || curBp?.referenceNo || '',
+            proposalDate:
+              nextOverrides['#1#'] || ext.manualInputs?.proposalDate || curBp?.proposalDate || '',
+            branchName: nextOverrides['#3#'] || curBp?.branchName || '',
+            accountNo: nextOverrides['#2#'] || curBp?.accountNo || '',
+            subjectText: curBp?.subjectText || '',
+            limitOriginal:
+              sec10Map.limitOfInvestment || nextOverrides['#6#'] || curBp?.limitOriginal || '',
+            limitRSD: curBp?.limitRSD || '',
+            securityMV: nextOverrides['#33#'] || curBp?.securityMV || '',
+            securityFSV: nextOverrides['#34#'] || curBp?.securityFSV || '',
+            justificationText:
+              ext.narratives?.justification ||
+              nextOverrides['#51#'] ||
+              curBp?.justificationText ||
+              '',
+            previousBoardDecisions:
+              st.previousBoardDecisions || curBp?.previousBoardDecisions || 'Nil',
+            natureOfBusiness:
+              ext.narratives?.sec1NatureOfBusiness ||
+              nextOverrides['#54#'] ||
+              curBp?.natureOfBusiness ||
+              '',
+            sec2Limit: st.sec2Limit || curBp?.sec2Limit || '',
+            sec2Validity: st.sec2Validity || curBp?.sec2Validity || '',
+            sec2Overdue: nextOverrides['#59#'] || curBp?.sec2Overdue || '',
+            sec2Recovery: nextOverrides['#60#'] || curBp?.sec2Recovery || '',
+            sec2Remarks:
+              [st.sec2Remarks, st.sec2NonFundedNote].filter(Boolean).join(' ') ||
+              curBp?.sec2Remarks ||
+              '',
+            section3AsOnDate: nextOverrides['#68#'] || curBp?.section3AsOnDate || '',
+            section3Rows:
+              st.section3Rows && st.section3Rows.length > 0
+                ? st.section3Rows
+                : curBp?.section3Rows || [],
+            section4CibDate: st.sec4CibDate || curBp?.section4CibDate || '',
+            section4Rows:
+              st.section4Rows && st.section4Rows.length > 0
+                ? st.section4Rows
+                : curBp?.section4Rows || [],
+            section5StatusNote: st.sec5StatusNote || curBp?.section5StatusNote || '',
+            section5Rows:
+              st.section5Rows && st.section5Rows.length > 0
+                ? st.section5Rows
+                : curBp?.section5Rows || [],
+            section6StatusNote: st.sec6StatusNote || curBp?.section6StatusNote || '',
+            section6Rows:
+              st.section6Rows && st.section6Rows.length > 0
+                ? st.section6Rows
+                : curBp?.section6Rows || [],
+            section7PrimaryNote: st.sec7PrimaryNote || curBp?.section7PrimaryNote || '',
+            section7PrimaryRows: curBp?.section7PrimaryRows || [],
+            section7PrimaryTotal: st.sec7PrimaryTotal || curBp?.section7PrimaryTotal || '',
+            section7CollateralNote: st.sec7CollateralNote || curBp?.section7CollateralNote || '',
+            section7CollateralSchedules:
+              st.sec7CollateralSchedules && st.sec7CollateralSchedules.length > 0
+                ? st.sec7CollateralSchedules
+                : curBp?.section7CollateralSchedules || [],
+            section7ValuationRows: curBp?.section7ValuationRows || [],
+            section7CoveragePct: st.sec7CoveragePct || curBp?.section7CoveragePct || '',
+            section7Others: st.sec7OthersNote || curBp?.section7Others || '',
+            section8SourceOfRepayment:
+              ext.narratives?.sec8SourceOfRepayment ||
+              ext.manualInputs?.sourceOfRepayment ||
+              curBp?.section8SourceOfRepayment ||
+              '',
+            section9Rows:
+              st.section9Rows && st.section9Rows.length > 0
+                ? st.section9Rows
+                : curBp?.section9Rows || [],
+            section10Particulars: {
+              ...emptyParticulars,
+              ...(curBp?.section10Particulars || {}),
+              ...(sec10Map as Partial<typeof emptyParticulars>),
+            },
+            section10Directors:
+              st.section10Directors && st.section10Directors.length > 0
+                ? st.section10Directors
+                : curBp?.section10Directors || [],
+            section10BankDirectors: curBp?.section10BankDirectors || [],
+            section11FinancialsNote: st.sec11FinancialsNote || curBp?.section11FinancialsNote || '',
+            section11Rows:
+              st.section11Financials && st.section11Financials.length > 0
+                ? st.section11Financials
+                : curBp?.section11Rows || [],
+            section12BranchVisitReport:
+              ext.narratives?.branchVisit || curBp?.section12BranchVisitReport || '',
+            section15BranchBicRec: curBp?.section15BranchBicRec || '',
+            section16BranchRec:
+              ext.narratives?.sec13BranchRecommendation || curBp?.section16BranchRec || '',
+          };
+          return { ...prev, branchProposal: nextBp };
+        });
+      }
+
+      // 5. Carried-forward IC Narratives -> aiSections (respecting manual edits)
+      if (ext.narratives) {
+        const nar = ext.narratives;
+        const edited = caseRef.current.manualEditedSections;
+        setAiSectionsSync((prev) => ({
+          ...prev,
+          justification:
+            !edited.justification && nar.justification?.trim()
+              ? nar.justification.trim()
+              : prev.justification,
+          sec1NatureOfBusiness:
+            !edited.sec1NatureOfBusiness && nar.sec1NatureOfBusiness?.trim()
+              ? nar.sec1NatureOfBusiness.trim()
+              : prev.sec1NatureOfBusiness,
+          sec8SourceOfRepayment:
+            !edited.sec8SourceOfRepayment && nar.sec8SourceOfRepayment?.trim()
+              ? nar.sec8SourceOfRepayment.trim()
+              : prev.sec8SourceOfRepayment,
+          clientPrayer:
+            !edited.clientPrayer && nar.clientPrayer?.trim()
+              ? nar.clientPrayer.trim()
+              : prev.clientPrayer,
+          branchVisit:
+            !edited.branchVisit && nar.branchVisit?.trim()
+              ? nar.branchVisit.trim()
+              : prev.branchVisit,
+          sec13BranchRecommendation:
+            !edited.sec13BranchRecommendation && nar.sec13BranchRecommendation?.trim()
+              ? nar.sec13BranchRecommendation.trim()
+              : prev.sec13BranchRecommendation,
+          sec14IccdRecommendation:
+            !edited.sec14IccdRecommendation && nar.sec14IccdRecommendation?.trim()
+              ? nar.sec14IccdRecommendation.trim()
+              : prev.sec14IccdRecommendation,
+          samdObservation:
+            !edited.samdObservation && nar.samdObservation?.trim()
+              ? nar.samdObservation.trim()
+              : prev.samdObservation,
+        }));
+      }
+
+      // 6. Target Stage AI Sections (never overwrite manually edited sections; Section 16 & 17 remain auto-synced to user inputs unless manually edited)
+      const stageEdits = caseRef.current.stageManualEditedSections;
+      const ts = ext.targetStageSections || {};
+      setStageAiSectionsSync((prev) => {
+        const next = { ...prev };
+        for (const k of [
+          'mecExecutiveSummary',
+          'mecSamdRecommendation',
+          'boardProposalRationale',
+          'boardResolutionTerms',
+          'sanctionBoardAuthority',
+          'sanctionCrossVerifiedSummary',
+          'sanctionSpecialConditions',
+        ] as StageScrutinySectionKey[]) {
+          const val = (ts[k] ?? '').trim();
+          if (val && !stageEdits[k]) {
+            next[k] = val;
+            countExtracted++;
+          }
+        }
+        return next;
+      });
+
+      const audit: StageSourceAuditResult = {
+        summary:
+          ext.auditFindings?.summary?.trim() ||
+          `Extracted and carried forward structured data from "${file.name}".`,
+        verifiedPoints: Array.isArray(ext.auditFindings?.verifiedPoints)
+          ? ext.auditFindings.verifiedPoints.filter((s) => typeof s === 'string' && s.trim())
+          : [],
+        discrepanciesOrMissing: Array.isArray(ext.auditFindings?.discrepanciesOrMissing)
+          ? ext.auditFindings.discrepanciesOrMissing.filter((s) => typeof s === 'string' && s.trim())
+          : [],
+      };
+
+      const extractedTime = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+
+      setStageSourceUploadsSync((prev) => ({
+        ...prev,
+        [docType]: {
+          ...prev[docType],
+          uploaded: true,
+          fileName: file.name,
+          processing: false,
+          stage: null,
+          error: null,
+          extractedAt: extractedTime,
+          extractedFieldCount: countExtracted,
+          audit,
+        },
+      }));
+
+      syncAppliedSnapshotFromRef();
+      await persistCentralCaseNow(true);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Failed to read and extract the uploaded memo document.';
+      setStageSourceUploadsSync((prev) => ({
+        ...prev,
+        [docType]: {
+          ...prev[docType],
+          processing: false,
+          stage: null,
+          error: msg,
+        },
+      }));
+    }
+  };
+
   const fetchStageEndpoint = async (
     url: string,
     payload: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<Response> => {
+    const docType = payload.docType as StageMemoDocType | undefined;
+    const stageFile = docType ? stageSourceFilesRef.current[docType] : undefined;
+    if (stageFile && docType) {
+      const stageSource = await prepareMemoDocumentSource(stageFile);
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal,
+        body: JSON.stringify({
+          ...payload,
+          sourceId: stageServerCachedSourceIdsRef.current[docType] || stageSource.sourceId,
+          stageSource,
+        }),
+      });
+    }
     if (branchProposalFile) {
       const source = await prepareBranchProposalSource(branchProposalFile);
       return fetchWithSourceCache(url, payload, source, signal);
@@ -1503,15 +2139,24 @@ export default function App() {
     });
   };
 
+  const hasStageOrCaseSource = (docType: StageMemoDocType) =>
+    Boolean(
+      branchProposalFile ||
+        caseRef.current.extractedDocs.branchProposal ||
+        resolvedICMemo.placeholders['#2#'] ||
+        stageSourceFilesRef.current[docType] ||
+        caseRef.current.stageSourceUploads[docType]?.uploaded
+    );
+
   const handleScrutinizeStageSection = async (
     docType: StageMemoDocType,
     section: StageScrutinySectionKey,
     forceOverwrite = false
   ) => {
     if (stageBatchScrutiny.running) return;
-    if (!branchProposalFile && !caseRef.current.extractedDocs.branchProposal && !resolvedICMemo.placeholders['#2#']) {
+    if (!hasStageOrCaseSource(docType)) {
       setAiError(
-        'Upload the Branch Proposal and supporting documents on the Manual Inputs tab first so AI can scrutinize and populate this stage.'
+        'Upload the case documents on Manual Inputs OR upload the completed previous-stage memo right above so AI can scrutinize and populate this stage.'
       );
       return;
     }
@@ -1654,9 +2299,9 @@ export default function App() {
 
   const handleScrutinizeStageAll = async (docType: StageMemoDocType) => {
     if (stageBatchScrutiny.running || scrutinizingStageSection !== null) return;
-    if (!branchProposalFile && !caseRef.current.extractedDocs.branchProposal && !resolvedICMemo.placeholders['#2#']) {
+    if (!hasStageOrCaseSource(docType)) {
       setAiError(
-        'Upload the Branch Proposal and supporting documents on the Manual Inputs tab first so AI can scrutinize and populate this stage.'
+        'Upload the case documents on Manual Inputs OR upload the completed previous-stage memo right above so AI can scrutinize and populate this stage.'
       );
       return;
     }
@@ -1925,7 +2570,13 @@ export default function App() {
     const syncedStageMemo =
       docType === 'ic'
         ? null
-        : resolveStageMemo(docType, syncedMemo, latest.stageInputs, latest.stageAiSections);
+        : resolveStageMemo(
+            docType,
+            syncedMemo,
+            latest.stageInputs,
+            latest.stageAiSections,
+            latest.stageManualEditedSections
+          );
 
     const docxBlob = await generateSynchronizedDocxBlob(
       docType,
@@ -2021,11 +2672,21 @@ export default function App() {
           </nav>
 
           {/* Zone 3: Primary Actions */}
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowClearConfirm(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              title="Clear all case inputs, uploaded documents, and generated memos while preserving templates"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Clear All Data</span>
+            </button>
+
             <button
               type="button"
               onClick={handleApplyAllChanges}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 hasPendingChanges
                   ? 'text-amber-950 bg-amber-100 hover:bg-amber-200 border-amber-300'
                   : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
@@ -2036,7 +2697,7 @@ export default function App() {
             </button>
 
             {activeTab !== 'manual' ? (
-              <>
+              <div className="hidden sm:flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => void handleDownloadDocx(activeTab as MemoDocType)}
@@ -2053,12 +2714,12 @@ export default function App() {
                 >
                   {downloadingPdf ? 'Rendering PDF...' : 'Download .pdf'}
                 </button>
-              </>
+              </div>
             ) : (
               <button
                 type="button"
                 onClick={() => setActiveTab('ic')}
-                className="px-4 py-2 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="hidden sm:inline-flex px-4 py-2 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 IC Memo
               </button>
@@ -2114,6 +2775,7 @@ export default function App() {
             onRemoveTemplate={handleRemoveTemplate}
             onApplyAllChanges={handleApplyAllChanges}
             hasPendingChanges={hasPendingChanges}
+            onClearAllData={() => setShowClearConfirm(true)}
           />
         )}
 
@@ -2161,6 +2823,9 @@ export default function App() {
             hasAnyCaseData={Boolean(
               resolvedICMemo.placeholders['#2#'] || resolvedICMemo.branchProposal
             )}
+            stageSourceUpload={stageSourceUploads.mec}
+            onUploadStageSource={handleUploadStageSource}
+            onClearStageSource={handleClearStageSource}
             aiError={aiError}
             onStageInputChange={handleStageInputChange}
             onUpdateStageAiSection={handleUpdateStageAiSection}
@@ -2197,6 +2862,9 @@ export default function App() {
             hasAnyCaseData={Boolean(
               resolvedICMemo.placeholders['#2#'] || resolvedICMemo.branchProposal
             )}
+            stageSourceUpload={stageSourceUploads.board}
+            onUploadStageSource={handleUploadStageSource}
+            onClearStageSource={handleClearStageSource}
             aiError={aiError}
             onStageInputChange={handleStageInputChange}
             onUpdateStageAiSection={handleUpdateStageAiSection}
@@ -2233,6 +2901,9 @@ export default function App() {
             hasAnyCaseData={Boolean(
               resolvedICMemo.placeholders['#2#'] || resolvedICMemo.branchProposal
             )}
+            stageSourceUpload={stageSourceUploads.sanction}
+            onUploadStageSource={handleUploadStageSource}
+            onClearStageSource={handleClearStageSource}
             aiError={aiError}
             onStageInputChange={handleStageInputChange}
             onUpdateStageAiSection={handleUpdateStageAiSection}
@@ -2256,6 +2927,58 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Confirmation Modal for Clear All Data */}
+      {showClearConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="clear-data-dialog-title"
+        >
+          <div className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-700" />
+              </div>
+              <div className="space-y-1">
+                <h2
+                  id="clear-data-dialog-title"
+                  className="font-display text-base font-bold text-slate-900"
+                >
+                  Clear All Case Data?
+                </h2>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  This will reset all entered fields, uploaded documents, extracted figures, AI-generated or manually edited contents across Manual Inputs, IC Memo, MEC Memo, Board Memo, and Sanction tabs so you can start a fresh case.
+                </p>
+                <p className="text-xs font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1.5 mt-2">
+                  Your uploaded custom .docx templates, default bank formats, and software settings will NOT be affected.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowClearConfirm(false)}
+                disabled={clearingCaseData}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleClearAllData()}
+                disabled={clearingCaseData}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-red-700 hover:bg-red-800 rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{clearingCaseData ? 'Clearing...' : 'Yes, Clear All Data'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -414,11 +414,17 @@ export function buildICMemoCoreBlocks(
     includeClosingBlock?: boolean;
     metaOverride?: { dated?: string; memoNo?: string; to?: string; from?: string };
     skipMetadataTable?: boolean;
+    insertedAfterSec15?: Array<{ sectionNumber: number; heading: string; text: string }>;
+    particularsSectionNumber?: number;
+    termsSectionNumber?: number;
   } = {}
 ): Array<Paragraph | Table> {
   const ph = memo.placeholders;
   const bp = memo.branchProposal;
   const v = (code: string) => valOrToken(ph, code);
+  const insertedAfterSec15 = options.insertedAfterSec15 ?? [];
+  const particularsSecNum = options.particularsSectionNumber ?? 16;
+  const termsSecNum = options.termsSectionNumber ?? 17;
 
   // Document body children
   const body: Array<Paragraph | Table> = [];
@@ -1936,7 +1942,21 @@ export function buildICMemoCoreBlocks(
     }
   }
 
-  // Section 16 (Particulars of the facility)
+  for (const sec of insertedAfterSec15) {
+    body.push(
+      p([txt(`${sec.sectionNumber}. ${sec.heading}:`, { bold: true, underline: true })], {
+        before: 45,
+        after: 15,
+      })
+    );
+    if (sec.text && sec.text.trim()) {
+      for (const line of sec.text.split('\n').filter((l) => l.trim())) {
+        body.push(p([txt(line.trim())], { indentLeft: 180, before: 12, after: 16, line: 245 }));
+      }
+    }
+  }
+
+  // Particulars of the facility (Section 16 in IC Memo; adjusted cleanly in MEC/Board Memos)
   const sec16Cols = pctWidths([5, 24, 71]);
   const sec16Rows: Array<[string, string, string, boolean]> = [
     ['a.', 'Facility', 'EXIT with Waiver under BRPD 1 Circular Letter No. 23 dated 29.06.2026', true],
@@ -1949,7 +1969,7 @@ export function buildICMemoCoreBlocks(
     ['h.', 'Repayment Method', 'Lump sum.', false],
   ];
   body.push(
-    p([txt('16. Particulars of the facility:', { bold: true, underline: true })], { before: 45, after: 15 }),
+    p([txt(`${particularsSecNum}. Particulars of the facility:`, { bold: true, underline: true })], { before: 45, after: 15 }),
     new Table({
       width: { size: BODY_WIDTH_TWIPS, type: WidthType.DXA },
       layout: TableLayoutType.FIXED,
@@ -2018,7 +2038,7 @@ export function buildICMemoCoreBlocks(
   ];
 
   body.push(
-    p([txt('17. Special Term(s) & Condition(s):', { bold: true, underline: true })], { before: 50, after: 15 }),
+    p([txt(`${termsSecNum}. Special Term(s) & Condition(s):`, { bold: true, underline: true })], { before: 50, after: 15 }),
     p(
       [txt('If the proposal approved, the branch is advised to comply the following special terms and conditions:')],
       { indentLeft: 280, before: 15, after: 20 }

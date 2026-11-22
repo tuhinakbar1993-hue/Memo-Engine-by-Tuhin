@@ -468,4 +468,20 @@ export interface AppliedSyncState {
   stageAiSections: StageAiSectionsData;
 }
 
+export interface StageSourceAuditResult {
+  summary: string;
+  verifiedPoints: string[];
+  discrepanciesOrMissing: string[];
+}
 
+export interface StageSourceUploadState {
+  uploaded: boolean;
+  fileName: string;
+  sourceType: 'ic_memo' | 'mec_memo' | 'board_memo';
+  processing: boolean;
+  stage: string | null;
+  error: string | null;
+  extractedAt: string | null;
+  extractedFieldCount: number;
+  audit: StageSourceAuditResult | null;
+}

@@ -342,7 +342,7 @@ export const STAGE_SECTION_LABELS: Record<StageScrutinySectionKey, string> = {
   mecIcRecommendation: 'Recommendation of the Investment Committee (IC)',
   mecExecutiveSummary: 'Executive Appraisal & Waiver Rationale for MEC',
   mecSamdRecommendation: 'Observation and Recommendation of SAMD for MEC',
-  boardMecRecommendation: 'Recommendation of the Management Executive Committee (MEC)',
+  boardMecRecommendation: 'Management Executive Committee (MEC) Recommendation',
   boardProposalRationale: 'Board Memorandum Summary & Financial Justification',
   boardResolutionTerms: 'Proposed Board Resolution & Approval Terms',
   sanctionBoardAuthority: 'Board Approval Reference & Sanction Basis',
@@ -350,11 +350,30 @@ export const STAGE_SECTION_LABELS: Record<StageScrutinySectionKey, string> = {
   sanctionSpecialConditions: 'Operative Terms, Conditions & Redemption Covenants',
 };
 
+export function formatStageOrder26(rawOrder: string, fallbackToken: string): string {
+  const clean = rawOrder.trim();
+  if (!clean) return `${fallbackToken}/26`;
+  return /\/26$/i.test(clean) ? clean : `${clean}/26`;
+}
+
+export function buildMecSection16Paragraph(icMemoNumber: string, icMemoDate: string): string {
+  const order = formatStageOrder26(icMemoNumber, '[Chronologic Order of the IC Memo]');
+  const dt = icMemoDate.trim() || '[IC Memo Date]';
+  return `This proposal was placed before the Investment Committee (IC) in its ${order} meeting held on ${dt}. The Committee recommended the proposal as presented.`;
+}
+
+export function buildBoardSection17Paragraph(mecMemoNumber: string, mecMemoDate: string): string {
+  const order = formatStageOrder26(mecMemoNumber, '[Chronologic Order of the MEC Memo]');
+  const dt = mecMemoDate.trim() || '[MEC Memo Date]';
+  return `This proposal was placed before the Management Executive Committee (MEC) in its ${order} meeting held on ${dt}. The Committee recommended the proposal as presented.`;
+}
+
 export function resolveStageMemo(
   docType: StageMemoDocType,
   icMemo: ResolvedICMemo,
   stageInputs: StageMemoInputs,
-  stageAi: StageAiSectionsData
+  stageAi: StageAiSectionsData,
+  stageManualEditedSections?: Partial<Record<StageScrutinySectionKey, boolean>>
 ): ResolvedStageMemo {
   const cleanInputs: StageMemoInputs = {
     icMemoNumber: stageInputs.icMemoNumber.trim(),
@@ -367,11 +386,24 @@ export function resolveStageMemo(
     sanctionDate: stageInputs.sanctionDate.trim(),
   };
 
+  const manualMecIc = Boolean(stageManualEditedSections?.mecIcRecommendation);
+  const manualBoardMec = Boolean(stageManualEditedSections?.boardMecRecommendation);
+
+  const mecIcText =
+    manualMecIc && (stageAi.mecIcRecommendation ?? '').trim()
+      ? (stageAi.mecIcRecommendation ?? '').trim()
+      : buildMecSection16Paragraph(cleanInputs.icMemoNumber, cleanInputs.icMemoDate);
+
+  const boardMecText =
+    manualBoardMec && (stageAi.boardMecRecommendation ?? '').trim()
+      ? (stageAi.boardMecRecommendation ?? '').trim()
+      : buildBoardSection17Paragraph(cleanInputs.mecMemoNumber, cleanInputs.mecMemoDate);
+
   const stageSections: Record<StageScrutinySectionKey, string> = {
-    mecIcRecommendation: (stageAi.mecIcRecommendation ?? '').trim(),
+    mecIcRecommendation: mecIcText,
     mecExecutiveSummary: (stageAi.mecExecutiveSummary ?? '').trim(),
     mecSamdRecommendation: (stageAi.mecSamdRecommendation ?? '').trim(),
-    boardMecRecommendation: (stageAi.boardMecRecommendation ?? '').trim(),
+    boardMecRecommendation: boardMecText,
     boardProposalRationale: (stageAi.boardProposalRationale ?? '').trim(),
     boardResolutionTerms: (stageAi.boardResolutionTerms ?? '').trim(),
     sanctionBoardAuthority: (stageAi.sanctionBoardAuthority ?? '').trim(),

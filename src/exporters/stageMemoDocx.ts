@@ -179,11 +179,6 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
   const body: Array<Paragraph | Table> = [];
 
   if (docType === 'mec') {
-    const icRefLine =
-      stageInputs.icMemoNumber || stageInputs.icMemoDate
-        ? `${stageInputs.icMemoNumber || '[Chronologic Order of the IC Memo]'} dated ${stageInputs.icMemoDate || '[IC Memo Date]'}`
-        : '';
-
     body.push(
       ...buildStageMetadataTable([
         { label: 'Dated', value: stageInputs.mecMemoDate || stageInputs.icMemoDate || v('#1#') },
@@ -195,29 +190,28 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
       ])
     );
 
-    // Full retained IC Memo core blocks (A/C bar, Subject, Settlement table, Key Points, Sections 1-17)
+    // Full retained IC Memo core blocks + Section 16 Recommendation of the Investment Committee (IC)
     body.push(
       ...buildICMemoCoreBlocks(icMemo, {
         includeClosingBlock: false,
         skipMetadataTable: true,
+        insertedAfterSec15: [
+          {
+            sectionNumber: 16,
+            heading: 'Recommendation of the Investment Committee (IC)',
+            text: stageSections.mecIcRecommendation,
+          },
+        ],
+        particularsSectionNumber: 17,
+        termsSectionNumber: 18,
       })
     );
 
-    // MEC Governance & AI Scrutiny Sections
-    const defaultIcRec = icRefLine
-      ? `The Investment Committee (IC), vide IC Memo (Chronologic Order: ${stageInputs.icMemoNumber || '[Chronologic Order of the IC Memo]'}) dated ${stageInputs.icMemoDate || '[IC Memo Date]'}, examined the proposal and recommended full and final Exit with Waiver of Tk. ${v('#4#')} Million against settlement amount of Tk. ${v('#27#')} Million within ${v('#28#')}.`
-      : '';
-
     body.push(
-      ...renderNarrativeParagraphs(
-        'Recommendation of the Investment Committee (IC):',
-        stageSections.mecIcRecommendation,
-        { before: 55, fallback: defaultIcRec }
-      ),
       ...renderNarrativeParagraphs(
         'Executive Appraisal & Waiver Rationale for MEC:',
         stageSections.mecExecutiveSummary,
-        { before: 40 }
+        { before: 45 }
       ),
       ...renderNarrativeParagraphs(
         'Observation and Recommendation of SAMD for MEC:',
@@ -246,34 +240,28 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
       ...buildICMemoCoreBlocks(icMemo, {
         includeClosingBlock: false,
         skipMetadataTable: true,
+        insertedAfterSec15: [
+          {
+            sectionNumber: 16,
+            heading: 'Recommendation of the Investment Committee (IC)',
+            text: stageSections.mecIcRecommendation,
+          },
+          {
+            sectionNumber: 17,
+            heading: 'Management Executive Committee (MEC) Recommendation',
+            text: stageSections.boardMecRecommendation,
+          },
+        ],
+        particularsSectionNumber: 18,
+        termsSectionNumber: 19,
       })
     );
 
-    if (stageSections.mecIcRecommendation.trim()) {
-      body.push(
-        ...renderNarrativeParagraphs(
-          'Recommendation of the Investment Committee (IC) (Carried Forward):',
-          stageSections.mecIcRecommendation,
-          { before: 50 }
-        )
-      );
-    }
-
-    const defaultMecRec =
-      stageInputs.mecMemoNumber || stageInputs.mecMemoDate
-        ? `The Management Executive Committee (MEC), vide MEC Memo (Chronologic Order: ${stageInputs.mecMemoNumber || '[Chronologic Order of the MEC Memo]'}) dated ${stageInputs.mecMemoDate || '[MEC Memo Date]'}, concurred with the Investment Committee (Chronologic Order of IC Memo: ${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}) and recommended Exit with Waiver of Tk. ${v('#4#')} Million for final placement before the Board of Directors.`
-        : '';
-
     body.push(
-      ...renderNarrativeParagraphs(
-        'Recommendation of the Management Executive Committee (MEC):',
-        stageSections.boardMecRecommendation,
-        { before: 55, fallback: defaultMecRec }
-      ),
       ...renderNarrativeParagraphs(
         'Board Memorandum Summary & Financial Justification:',
         stageSections.boardProposalRationale,
-        { before: 40 }
+        { before: 45 }
       ),
       ...renderNarrativeParagraphs(
         'Proposed Board Resolution & Approval Terms:',

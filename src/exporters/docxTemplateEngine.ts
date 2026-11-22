@@ -1760,10 +1760,10 @@ function applyStructuralPopulations(
         else if (/^Board\s*Memo\s*Date$/i.test(label)) trySet(nonEmpty(si.boardMemoDate));
         else if (/^Sanction\s*(?:Ref\.?\s*No\.?|Number)$/i.test(label)) trySet(nonEmpty(si.sanctionRefNumber));
         else if (/^Sanction\s*Date$/i.test(label)) trySet(nonEmpty(si.sanctionDate));
-        else if (/Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i.test(label)) trySet(nonEmpty(ss.mecIcRecommendation));
+        else if (/(?:Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee|Investment\s+Committee\s*(?:\(IC\))?\s+Recommendation)/i.test(label)) trySet(nonEmpty(ss.mecIcRecommendation));
         else if (/Executive\s+Appraisal/i.test(label)) trySet(nonEmpty(ss.mecExecutiveSummary));
         else if (/Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i.test(label)) trySet(nonEmpty(ss.mecSamdRecommendation));
-        else if (/Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i.test(label)) trySet(nonEmpty(ss.boardMecRecommendation));
+        else if (/(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*(?:\(MEC\))?\s+Recommendation)/i.test(label)) trySet(nonEmpty(ss.boardMecRecommendation));
         else if (/Board\s+Memorandum\s+Summary/i.test(label)) trySet(nonEmpty(ss.boardProposalRationale));
         else if (/Proposed\s+Board\s+Resolution/i.test(label)) trySet(nonEmpty(ss.boardResolutionTerms));
         else if (/Board\s+Approval\s+Reference/i.test(label)) trySet(nonEmpty(ss.sanctionBoardAuthority));
@@ -1844,10 +1844,10 @@ function applyStructuralPopulations(
 
   if (stageMemo) {
     const ss = stageMemo.stageSections;
-    ensureHeadingValue(ss.mecIcRecommendation, /Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i, true);
+    ensureHeadingValue(ss.mecIcRecommendation, /(?:Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee|Investment\s+Committee\s*(?:\(IC\))?\s+Recommendation)/i, true);
     ensureHeadingValue(ss.mecExecutiveSummary, /Executive\s+Appraisal\s*&\s*Waiver\s+Rationale/i, true);
     ensureHeadingValue(ss.mecSamdRecommendation, /Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i, true);
-    ensureHeadingValue(ss.boardMecRecommendation, /Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i, true);
+    ensureHeadingValue(ss.boardMecRecommendation, /(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*(?:\(MEC\))?\s+Recommendation)/i, true);
     ensureHeadingValue(ss.boardProposalRationale, /Board\s+Memorandum\s+Summary/i, true);
     ensureHeadingValue(ss.boardResolutionTerms, /Proposed\s+Board\s+Resolution/i, true);
     ensureHeadingValue(ss.sanctionBoardAuthority, /Board\s+Approval\s+Reference/i, true);
@@ -2141,7 +2141,7 @@ export async function verifyPopulatedDocxBlob(
       checkNarrative(
         'Recommendation of the Investment Committee (IC)',
         ss.mecIcRecommendation,
-        /Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee/i,
+        /(?:Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee|Investment\s+Committee\s*(?:\(IC\))?\s+Recommendation)/i,
         ['#mecIcRecommendation#', '{{mecIcRecommendation}}']
       );
       checkNarrative(
@@ -2170,9 +2170,9 @@ export async function verifyPopulatedDocxBlob(
         ['#mecMemoDate#', '{{mecMemoDate}}']
       );
       checkNarrative(
-        'Recommendation of the Management Executive Committee (MEC)',
+        'Management Executive Committee (MEC) Recommendation',
         ss.boardMecRecommendation,
-        /Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee/i,
+        /(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*(?:\(MEC\))?\s+Recommendation)/i,
         ['#boardMecRecommendation#', '{{boardMecRecommendation}}']
       );
       checkNarrative(

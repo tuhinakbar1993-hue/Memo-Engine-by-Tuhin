@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   RotateCcw,
+  Trash2,
   X,
 } from 'lucide-react';
 import { IC_PLACEHOLDER_SPECS } from '../engines/icMemoEngine';
@@ -44,6 +45,7 @@ interface ManualInputsTabProps {
   onRemoveTemplate: (docType: MemoDocType) => Promise<void>;
   onApplyAllChanges: () => void;
   hasPendingChanges: boolean;
+  onClearAllData: () => void;
 }
 
 const DOC_ORDER: DocumentKey[] = [
@@ -75,6 +77,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
   onRemoveTemplate,
   onApplyAllChanges,
   hasPendingChanges,
+  onClearAllData,
 }) => {
   const [showAllFields, setShowAllFields] = useState(true);
   const [searchFilter, setSearchFilter] = useState('');
@@ -149,6 +152,15 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
           >
             <RefreshCw className="w-4 h-4" />
             <span>Apply All Changes</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onClearAllData}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Clear All Data</span>
           </button>
 
           <button

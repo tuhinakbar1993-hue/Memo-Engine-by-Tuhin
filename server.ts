@@ -689,8 +689,8 @@ function buildCachedSource(
   sourceId: string,
   incoming: IncomingBranchProposalSource
 ): CachedBranchProposalSource | null {
-  const rawText = typeof incoming.rawText === 'string' ? incoming.rawText.slice(0, 45000) : '';
-  const pageImages = Array.isArray(incoming.pageImages) ? incoming.pageImages.slice(0, 12) : [];
+  const rawText = typeof incoming.rawText === 'string' ? incoming.rawText.slice(0, 75000) : '';
+  const pageImages = Array.isArray(incoming.pageImages) ? incoming.pageImages.slice(0, 14) : [];
   const imageParts: Array<{ inlineData: { mimeType: string; data: string } }> = [];
   for (const img of pageImages) {
     if (img?.data && img?.mimeType) {
@@ -1757,18 +1757,21 @@ ${resolved.source.rawText}${contextSuffix}`,
     };
 
     switch (section) {
-      case 'mecIcRecommendation':
+      case 'mecIcRecommendation': {
+        const icOrderToken = /\/26$/i.test(icNo) ? icNo : `${icNo}/26`;
         return {
           prompt: `${icCentralRule}
-Write Section "Recommendation of the Investment Committee (IC)" for the Management Executive Committee (MEC) Memorandum.
-You MUST explicitly incorporate the Chronologic Order of the IC Memo "${icNo}" and IC Memo Date "${icDt}" into the formal recommendation wording (e.g., referencing the Investment Committee's recommendation vide IC Memo (Chronologic Order: ${icNo}) dated ${icDt}), accurately stating the recommended Exit with Waiver facility under BRPD Circular Letter No. 23 dated 29.06.2026, NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), Settlement Period (#28#), Cost of Fund compliance (#31#, #44#), and placement before the MEC for kind consideration.
-Output ONLY clean official banking text with no AI preambles or markdown asterisks.`,
+Write Section "16. Recommendation of the Investment Committee (IC)" for the Management Executive Committee (MEC) Memorandum.
+You MUST use the EXACT standardized wording below, inserting Chronologic Order "${icOrderToken}" and IC Memo Date "${icDt}":
+"This proposal was placed before the Investment Committee (IC) in its ${icOrderToken} meeting held on ${icDt}. The Committee recommended the proposal as presented."
+Output ONLY that clean official sentence with no AI preambles, no markdown asterisks, and no extra commentary. If either Chronologic Order of the IC Memo or IC Memo Date is still an unfilled bracketed placeholder, report that concisely in "insufficientReason".`,
           schema,
         };
+      }
       case 'mecExecutiveSummary':
         return {
           prompt: `${icCentralRule}
-Scrutinize the finalized IC Memo (including Contents of the Client's Prayer, Justification, Liability Positions, CIB Status, Legal/Audit Status, Security Valuation MV/FSV, Source of Repayment, Branch Visit Report, Branch Recommendation, and SAMD Observation) alongside the Branch Proposal and write Section "Executive Appraisal & Waiver Rationale for MEC".
+Scrutinize the finalized/uploaded IC Memo (including Contents of the Client's Prayer, Justification, Liability Positions, CIB Status, Legal/Audit Status, Security Valuation MV/FSV, Source of Repayment, Branch Visit Report, Branch Recommendation, and SAMD Observation) alongside any Branch Proposal and write Section "Executive Appraisal & Waiver Rationale for MEC".
 Write 2 concise, structured formal banking paragraphs synthesizing the borrower's distress, security coverage, Cost of Fund surplus/deficit vs maximum permissible waiver, and strategic recovery benefit for the Management Executive Committee strictly preserving all IC Memo facts and figures. Clean official prose only, no asterisks.`,
           schema,
         };
@@ -1779,14 +1782,17 @@ Write Section "Observation and Recommendation of SAMD for MEC" placing this Exit
 Write 3 to 4 crisp numbered formal points ("1. ...", "2. ...", "3. ...") summarizing verified liability & COF recovery protection carried forward from the IC Memo, compliance with special terms & conditions, and formal recommendation for MEC approval/onward placement before the Board. Clean official prose only.`,
           schema,
         };
-      case 'boardMecRecommendation':
+      case 'boardMecRecommendation': {
+        const mecOrderToken = /\/26$/i.test(mecNo) ? mecNo : `${mecNo}/26`;
         return {
           prompt: `${icCentralRule}
-Write Section "Recommendation of the Management Executive Committee (MEC)" for the Board of Directors Memorandum.
-You MUST explicitly incorporate the Chronologic Order of the MEC Memo "${mecNo}" and MEC Memo Date "${mecDt}" (while preserving reference to Chronologic Order of the IC Memo "${icNo}" dated "${icDt}" where available), accurately summarizing the MEC's recommendation for Exit with Waiver under BRPD Circular Letter No. 23 dated 29.06.2026 covering Account (#2#), Branch (#3#), NET Outstanding (#25#), Proposed Waiver (#4#), Settlement Amount (#27#), Down Payment (#35#), and Settlement Period (#28#).
-Clean formal banking prose only; no markdown asterisks or AI notes.`,
+Write Section "17. Management Executive Committee (MEC) Recommendation" for the Board of Directors Memorandum.
+You MUST use the EXACT standardized wording below, inserting Chronologic Order "${mecOrderToken}" and MEC Memo Date "${mecDt}":
+"This proposal was placed before the Management Executive Committee (MEC) in its ${mecOrderToken} meeting held on ${mecDt}. The Committee recommended the proposal as presented."
+Output ONLY that clean official sentence with no AI preambles, no markdown asterisks, and no extra commentary. If either Chronologic Order of the MEC Memo or MEC Memo Date is still an unfilled bracketed placeholder, report that concisely in "insufficientReason".`,
           schema,
         };
+      }
       case 'boardProposalRationale':
         return {
           prompt: `${icCentralRule}
@@ -1871,7 +1877,7 @@ Write crisp numbered operative covenants ("i. ...", "ii. ...", etc.) covering ad
 
     const textPayload = `${prompt}
 
-${source ? `Uploaded Branch Proposal File: ${source.fileName}\nExtracted Text:\n${source.rawText}\n` : ''}
+${source ? `Uploaded Source Document (${source.fileName}):\n${source.rawText}\n` : ''}
 Chained Memo & Verified Document Context (IC Memo -> MEC Memo -> Board Memo -> Sanction + Stage Inputs):
 ${contextStr}`;
 
@@ -1928,7 +1934,7 @@ ${contextStr}`;
       properties[sec] = cfg.schema;
       promptBlocks.push(`### STAGE SECTION KEY "${sec}":\n${cfg.prompt}`);
     }
-    const prompt = `Scrutinize the finalized IC Memo, chained memo context, and Branch Proposal once and populate ALL ${sections.length} requested stage sections below in a single structured JSON object.
+    const prompt = `Scrutinize the finalized IC Memo, chained memo context, and any uploaded source memo once and populate ALL ${sections.length} requested stage sections below in a single structured JSON object.
 Follow EVERY section's exact instructions and integrity rules cleanly (no AI notes or markdown asterisks).
 
 ${promptBlocks.join('\n\n')}`;
@@ -1944,13 +1950,424 @@ ${promptBlocks.join('\n\n')}`;
     };
   }
 
+  app.post('/api/gemini/extract-stage-source', async (req, res) => {
+    try {
+      const { targetDocType, sourceId, memoSource, stageInputs, existingContext } = req.body as {
+        targetDocType: StageMemoDocType;
+        sourceId?: string;
+        memoSource?: IncomingBranchProposalSource | null;
+        stageInputs?: Record<string, string>;
+        existingContext?: Record<string, unknown>;
+      };
+
+      if (!targetDocType || !VALID_STAGE_DOCS.has(targetDocType)) {
+        res.status(400).json({ error: 'Invalid target memo stage type.' });
+        return;
+      }
+
+      const source = resolveOptionalStageSource(sourceId, memoSource);
+      if (!source) {
+        res.status(400).json({
+          error: 'Uploaded document is empty or unreadable. Please upload a valid PDF, Word (.docx), Excel, or image memo file.',
+        });
+        return;
+      }
+
+      const aiClient = resolveAiClient();
+      if (!aiClient.ok) {
+        res.status(aiClient.status).json({ error: aiClient.error });
+        return;
+      }
+      const ai = aiClient.ai;
+
+      const sourceRole =
+        targetDocType === 'mec'
+          ? 'completed IC Memo'
+          : targetDocType === 'board'
+            ? 'completed MEC Memo'
+            : 'completed Board Memo';
+
+      const targetRole =
+        targetDocType === 'mec'
+          ? 'MEC Memo (Management Executive Committee)'
+          : targetDocType === 'board'
+            ? 'Board Memo (Board of Directors)'
+            : 'Sanction Letter (Head Office Sanction Authority)';
+
+      const kvSchema: Schema = {
+        type: Type.OBJECT,
+        properties: {
+          key: strField('Field identifier'),
+          value: strField('Exact extracted value or "" if absent'),
+        },
+        required: ['key', 'value'],
+      };
+
+      const extractSchema: Schema = {
+        type: Type.OBJECT,
+        properties: {
+          placeholders: {
+            type: Type.ARRAY,
+            items: kvSchema,
+            description:
+              'List of {key, value} for placeholder codes found in the document from: #1# Proposal/Memo Date, #2# A/C Title & No, #3# Branch, #4# Proposed Waiver, #5# Mode of Investment, #6# Sanctioned Limit, #7# Principal Outstanding, #8# Charges, #10# Principal Balance for Settlement/COF, #11# Charged Profit, #12# Compensation, #25# NET Outstanding, #27# Settlement/Exit Amount, #28# Settlement Period, #31# Cost of Fund, #32# Breakup Total (10+8+11+12), #33# Security Market Value MV, #34# Security FSV, #35# Down Payment, #36# Down Payment Account, #42# Gross Balance for Max Waiver, #44# Max Permissible Waiver, #45# Surplus/Deficit vs COF, #47# Total Waiver Recommended, #51# Justification (3 points), #54# Nature of Business, #55# Classification Status (CL/DF/BL/SS), #56# First Sanction Date, #58# Expiry Date, #59# Uncharged Profit/Comp, #60# Last Repayment Date/Amt, #62# Provision Held, #64# Branch Proposal Ref No, #65# Branch Proposal Date, #68# Liability Cutoff Date, #69# CIS/Unique Customer ID.',
+          },
+          manualInputs: {
+            type: Type.OBJECT,
+            properties: {
+              proposalDate: strField('Proposal / Memo Date (#1#), or ""'),
+              waiverAmount: strField('Proposed Waiver (#4#) numeric/text without Tk prefix if clean, or ""'),
+              settlementAmount: strField('Settlement / Exit Amount (#27#), or ""'),
+              settlementPeriod: strField('Settlement Period (#28#), or ""'),
+              waiverRecClientBranch: strField('Waiver Recommended by Branch/Client, or ""'),
+              waiverRecHO: strField('Waiver Recommended by Head Office/SAMD, or ""'),
+              sourceOfRepayment: strField('Section 8 Source of Repayment text, or ""'),
+            },
+            required: [
+              'proposalDate',
+              'waiverAmount',
+              'settlementAmount',
+              'settlementPeriod',
+              'waiverRecClientBranch',
+              'waiverRecHO',
+              'sourceOfRepayment',
+            ],
+          },
+          extractedStageInputs: {
+            type: Type.OBJECT,
+            properties: {
+              icMemoNumber: strField('Chronologic Order / Number of IC Memo if explicitly stated in document, or ""'),
+              icMemoDate: strField('IC Memo Date if explicitly stated, or ""'),
+              mecMemoNumber: strField('Chronologic Order / Number of MEC Memo if explicitly stated, or ""'),
+              mecMemoDate: strField('MEC Memo Date if explicitly stated, or ""'),
+              boardMemoNumber: strField('Chronologic Order / Number of Board Memo if explicitly stated, or ""'),
+              boardMemoDate: strField('Board Memo Date if explicitly stated, or ""'),
+              sanctionRefNumber: strField('Sanction Reference No if explicitly stated, or ""'),
+              sanctionDate: strField('Sanction Date if explicitly stated, or ""'),
+            },
+            required: [
+              'icMemoNumber',
+              'icMemoDate',
+              'mecMemoNumber',
+              'mecMemoDate',
+              'boardMemoNumber',
+              'boardMemoDate',
+              'sanctionRefNumber',
+              'sanctionDate',
+            ],
+          },
+          narratives: {
+            type: Type.OBJECT,
+            properties: {
+              justification: strField('Justification of Proposed Facility (#51#), exact points preserved or ""'),
+              sec1NatureOfBusiness: strField('Section 1 Nature of Business (#54#), or ""'),
+              sec8SourceOfRepayment: strField('Section 8 Source of Repayment, or ""'),
+              clientPrayer: strField('Section 12 Contents of the Clients Prayer, or ""'),
+              branchVisit: strField('Section 12 Branch Visit Report, or ""'),
+              sec13BranchRecommendation: strField('Section 13 Recommendation of the Branch, or ""'),
+              sec14IccdRecommendation: strField('Section 14 Recommendation of ICCD, or ""'),
+              samdObservation: strField('Section 15 Observation and Recommendation of SAMD, or ""'),
+              carriedMecIcRecommendation: strField('Recommendation of the IC (carried forward if present in uploaded MEC/Board Memo), or ""'),
+              carriedBoardMecRecommendation: strField('Recommendation of the MEC (carried forward if present in uploaded Board Memo), or ""'),
+            },
+            required: [
+              'justification',
+              'sec1NatureOfBusiness',
+              'sec8SourceOfRepayment',
+              'clientPrayer',
+              'branchVisit',
+              'sec13BranchRecommendation',
+              'sec14IccdRecommendation',
+              'samdObservation',
+              'carriedMecIcRecommendation',
+              'carriedBoardMecRecommendation',
+            ],
+          },
+          structuredTables: {
+            type: Type.OBJECT,
+            properties: {
+              sec2Limit: strField('Section 2 Sanctioned Limit, or ""'),
+              sec2Validity: strField('Section 2 Validity/Expiry, or ""'),
+              sec2Remarks: strField('Section 2 Remarks, or ""'),
+              sec2NonFundedNote: strField('Section 2 Non-Funded/sister concern note, or ""'),
+              section3Rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    sl: strField('SL'),
+                    nameOfConcern: strField('Name of Concern'),
+                    bankOrNbfi: strField('Name of Banks/NBFIs'),
+                    natureOfFacility: strField('Nature of Facility'),
+                    limit: strField('Limit'),
+                    outstanding: strField('Outstanding'),
+                    overdueEol: strField('Overdue/EOL'),
+                    expiryDate: strField('Expiry Date'),
+                    clStatus: strField('CL Status'),
+                  },
+                  required: ['sl', 'nameOfConcern', 'bankOrNbfi', 'natureOfFacility', 'limit', 'outstanding', 'overdueEol', 'expiryDate', 'clStatus'],
+                },
+              },
+              sec4CibDate: strField('Section 4 CIB Report Date, or ""'),
+              section4Rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    status: strField('Status'),
+                    unitBorrower: strField('Unit Borrower'),
+                    unitGuarantor: strField('Unit Guarantor'),
+                    otherBorrower: strField('Other Bank Borrower'),
+                    otherGuarantor: strField('Other Bank Guarantor'),
+                    remarks: strField('Remarks'),
+                  },
+                  required: ['status', 'unitBorrower', 'unitGuarantor', 'otherBorrower', 'otherGuarantor', 'remarks'],
+                },
+              },
+              sec5StatusNote: strField('Section 5 Legal Action header note (e.g., Nil/N/A), or ""'),
+              section5Rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    sl: strField('Sl'),
+                    typeOfCase: strField('Type of Case'),
+                    caseNo: strField('Case No.'),
+                    filingDate: strField('Filing date'),
+                    amount: strField('Amount'),
+                    previousDate: strField('Previous date'),
+                    nextDate: strField('Next date'),
+                    presentStatus: strField('Present status'),
+                  },
+                  required: ['sl', 'typeOfCase', 'caseNo', 'filingDate', 'amount', 'previousDate', 'nextDate', 'presentStatus'],
+                },
+              },
+              sec6StatusNote: strField('Section 6 Audit Status note, or ""'),
+              section6Rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    sl: strField('SL'),
+                    authority: strField('Authority'),
+                    lastInspectionDate: strField('Last Inspection Date'),
+                    objectionStatus: strField('Objection Status'),
+                    objections: strField('Objections'),
+                    branchReply: strField('Branch Reply'),
+                  },
+                  required: ['sl', 'authority', 'lastInspectionDate', 'objectionStatus', 'objections', 'branchReply'],
+                },
+              },
+              sec7PrimaryNote: strField('Section 7a Primary note, or ""'),
+              sec7PrimaryTotal: strField('Section 7a Primary Total, or ""'),
+              sec7CollateralNote: strField('Section 7b Collateral note, or ""'),
+              sec7CollateralSchedules: { type: Type.ARRAY, items: { type: Type.STRING } },
+              sec7CoveragePct: strField('Section 7 Coverage %, or ""'),
+              sec7OthersNote: strField('Section 7c Others note, or ""'),
+              section9Rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    sanctionSl: strField('Sanction SL'),
+                    sanctionAuthority: strField('Sanctioning Authority'),
+                    approvedDate: strField('Approved Date'),
+                    natureOfApproval: strField('Nature of Approval'),
+                    complianceStatus: strField('Compliance Status'),
+                  },
+                  required: ['sanctionSl', 'sanctionAuthority', 'approvedDate', 'natureOfApproval', 'complianceStatus'],
+                },
+              },
+              sec10ParticularsPairs: {
+                type: Type.ARRAY,
+                items: kvSchema,
+                description:
+                  'Key-value pairs from Section 10 Particulars using keys: nameOfClient, uniqueCustomerId, awcdMsdAccount, businessTypeNature, businessManagementType, clientType, keyPersonPhone, address, officeBusinessAddress, factoryAddress, purposeOfInvestment, limitOfInvestment, modeOfInvestment, lastVisitDate, stockPosition, fixedAsset, businessNetWorth, insuranceCoverage, tradeLicenseValidity, otherRegulatoryDocuments, dateOfOriginalInvestment, firstDisbursementManager, firstDateOfClassification.',
+              },
+              section10Directors: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: strField('Name of Director/Proprietor/Partner'),
+                    age: strField('Age'),
+                    education: strField('Educational Qualification'),
+                    designation: strField('Designation'),
+                    sharePct: strField('Share %'),
+                    experience: strField('Business Experience'),
+                    netWorth: strField('Personal Net Worth'),
+                  },
+                  required: ['name', 'age', 'education', 'designation', 'sharePct', 'experience', 'netWorth'],
+                },
+              },
+              sec11FinancialsNote: strField('Section 11 Financials note, or ""'),
+              section11Financials: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    year: strField('Year'),
+                    grossSales: strField('Gross Sales'),
+                    grossProfit: strField('Gross Profit'),
+                    netProfit: strField('Net Profit'),
+                    totalAsset: strField('Total Asset'),
+                    totalLiabilities: strField('Total Liabilities'),
+                    netWorth: strField('Net Worth'),
+                  },
+                  required: ['year', 'grossSales', 'grossProfit', 'netProfit', 'totalAsset', 'totalLiabilities', 'netWorth'],
+                },
+              },
+              previousBoardDecisions: strField('Previous EC/Board decisions if stated, or ""'),
+            },
+            required: [
+              'sec2Limit',
+              'sec2Validity',
+              'sec2Remarks',
+              'sec2NonFundedNote',
+              'section3Rows',
+              'sec4CibDate',
+              'section4Rows',
+              'sec5StatusNote',
+              'section5Rows',
+              'sec6StatusNote',
+              'section6Rows',
+              'sec7PrimaryNote',
+              'sec7PrimaryTotal',
+              'sec7CollateralNote',
+              'sec7CollateralSchedules',
+              'sec7CoveragePct',
+              'sec7OthersNote',
+              'section9Rows',
+              'sec10ParticularsPairs',
+              'section10Directors',
+              'sec11FinancialsNote',
+              'section11Financials',
+              'previousBoardDecisions',
+            ],
+          },
+          targetStageSections: {
+            type: Type.OBJECT,
+            properties: {
+              mecExecutiveSummary: strField('For targetDocType mec: Executive Appraisal & Waiver Rationale for MEC; else ""'),
+              mecSamdRecommendation: strField('For targetDocType mec: Observation and Recommendation of SAMD for MEC; else ""'),
+              boardProposalRationale: strField('For targetDocType board: Board Memorandum Summary & Financial Justification; else ""'),
+              boardResolutionTerms: strField('For targetDocType board: Proposed Board Resolution & Approval Terms; else ""'),
+              sanctionBoardAuthority: strField('For targetDocType sanction: Board Approval Reference & Sanction Basis; else ""'),
+              sanctionCrossVerifiedSummary: strField('For targetDocType sanction: AI Cross-Verified Facility & Liability Confirmation; else ""'),
+              sanctionSpecialConditions: strField('For targetDocType sanction: Operative Terms, Conditions & Redemption Covenants (tailored to Sanction Letter format); else ""'),
+            },
+            required: [
+              'mecExecutiveSummary',
+              'mecSamdRecommendation',
+              'boardProposalRationale',
+              'boardResolutionTerms',
+              'sanctionBoardAuthority',
+              'sanctionCrossVerifiedSummary',
+              'sanctionSpecialConditions',
+            ],
+          },
+          auditFindings: {
+            type: Type.OBJECT,
+            properties: {
+              summary: strField('1-2 sentence audit summary of what was extracted from the uploaded memo.'),
+              verifiedPoints: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Key verified items extracted and cross-checked cleanly.',
+              },
+              discrepanciesOrMissing: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Any missing fields, unreadable cells, arithmetic mismatches, or conflicting details detected in the uploaded memo (NEVER fabricate missing data).',
+              },
+            },
+            required: ['summary', 'verifiedPoints', 'discrepanciesOrMissing'],
+          },
+        },
+        required: [
+          'placeholders',
+          'manualInputs',
+          'extractedStageInputs',
+          'narratives',
+          'structuredTables',
+          'targetStageSections',
+          'auditFindings',
+        ],
+      };
+
+      const stageSpecificInstruction =
+        targetDocType === 'mec'
+          ? `TARGET STAGE: Prepare the MEC Memo from this uploaded completed IC Memo.
+1. Extract ALL client particulars, account numbers (#2#, #69#), branch (#3#), dates (#1#, #68#), facility figures (#4#, #5#, #6#, #7#, #8#, #10#, #11#, #12#, #25#, #27#, #28#, #31#, #32#, #33#, #34#, #35#, #36#, #42#, #44#, #45#, #47#, #55#, #56#, #58#, #59#, #60#, #62#, #64#, #65#), structured tables (Sections 2-11), and all narratives (Justification #51#, Prayer, Branch Visit, Branch Rec, ICCD Rec, SAMD Observation) faithfully without omitting or altering figures.
+2. In "targetStageSections", populate "mecExecutiveSummary" (2 structured formal paragraphs for MEC appraisal) and "mecSamdRecommendation" (3-4 numbered formal SAMD points for MEC) grounded strictly in the uploaded IC Memo.`
+          : targetDocType === 'board'
+            ? `TARGET STAGE: Prepare the Board Memo from this uploaded completed MEC Memo.
+1. Extract ALL carried-forward client particulars, facility details, financial figures, tables (Sections 2-11), narratives (Sections 1, 8, 12-15), IC recommendation ("carriedMecIcRecommendation"), and any IC/MEC memo chronological orders & dates faithfully.
+2. In "targetStageSections", populate "boardProposalRationale" (Board Memorandum Summary & Financial Justification) and "boardResolutionTerms" (Proposed Board Resolution & Approval Terms) grounded strictly in the uploaded MEC Memo.`
+            : `TARGET STAGE: Prepare the Head Office Sanction Letter from this uploaded completed Board Memo through deep AI scrutiny and cross-verification.
+1. Extract ALL client particulars, facility details, approved financial figures, special terms & conditions, Board/MEC/IC references, and tables accurately.
+2. Cross-verify arithmetic & textual consistency across all sections of the uploaded Board Memo (e.g., Principal + Charges + Charged Profit + Comp vs NET Outstanding; Breakup Total vs Settlement Amount & Cost of Fund; Waiver + Settlement vs Outstanding; Down Payment account & amount; Special Terms compliance). Report ANY discrepancy, missing figure, or conflict honestly in "auditFindings.discrepanciesOrMissing" without ever fabricating data!
+3. Adapt and organize the approved data into formal Head Office Sanction Letter format inside "targetStageSections":
+   - "sanctionBoardAuthority": Board Approval Reference & Sanction Basis (incorporating Board/MEC/IC memo refs & dates).
+   - "sanctionCrossVerifiedSummary": AI Cross-Verified Facility & Liability Confirmation (exact Million BDT breakdown & cross-check outcome).
+   - "sanctionSpecialConditions": Operative Terms, Conditions & Redemption Covenants (formal numbered Head Office covenants "i. ...", "ii. ...", tailored specifically for Sanction execution).`;
+
+      const prompt = `You are a Senior Credit Analyst at SAMD, Head Office, Sammilito Islami Bank PLC.
+Carefully read, extract, identify, and scrutinize EVERY page, table, and narrative from the uploaded ${sourceRole} ("${source.fileName}") to prepare the ${targetRole}.
+NEVER omit, alter, or fabricate numbers, dates, account titles, or facts. Leave absent fields as "" and list any missing, unreadable, or inconsistent items inside "auditFindings.discrepanciesOrMissing".
+Keep all numeric figures strictly in Million BDT matching the document (clean numbers like "1.61" where appropriate for placeholders).
+
+Current User Stage Reference Inputs (use if document lacks them, or report if document differs):
+${JSON.stringify(stageInputs ?? {})}
+
+Existing Context Snapshot (if any prior docs were loaded):
+${JSON.stringify(existingContext ? { placeholders: existingContext.placeholders } : {})}
+
+${stageSpecificInstruction}
+
+Uploaded ${sourceRole} Extracted Text:
+${source.rawText}`;
+
+      const parts: Array<{ inlineData: { mimeType: string; data: string } } | { text: string }> =
+        source.imageParts.length > 0 ? [...source.imageParts, { text: prompt }] : [{ text: prompt }];
+
+      const response = await executeWithModelFallback((model) =>
+        ai.models.generateContent({
+          model,
+          contents: { parts },
+          config: buildModelConfig(model, {
+            systemInstruction: SCRUTINY_SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            responseSchema: extractSchema,
+          }),
+        })
+      );
+
+      const parsed = JSON.parse(stripJsonFences(response.text ?? '{}') || '{}') as Record<string, unknown>;
+      res.json({
+        sourceId: source.sourceId,
+        fileName: source.fileName,
+        extracted: parsed,
+      });
+    } catch (error) {
+      if (!(error instanceof MissingApiKeyError)) {
+        console.error('Error extracting stage source document:', error);
+      }
+      const status = error instanceof MissingApiKeyError ? 503 : 500;
+      res.status(status).json({
+        error: formatGeminiError(error, 'Failed to read and scrutinize uploaded memo document.'),
+      });
+    }
+  });
+
   app.post('/api/gemini/scrutinize-stage-section', async (req, res) => {
     try {
-      const { docType, section, sourceId, branchProposalSource, context } = req.body as {
+      const { docType, section, sourceId, branchProposalSource, stageSource, context } = req.body as {
         docType: StageMemoDocType;
         section: StageScrutinySectionKey;
         sourceId?: string;
         branchProposalSource?: IncomingBranchProposalSource | null;
+        stageSource?: IncomingBranchProposalSource | null;
         context?: Record<string, unknown>;
       };
 
@@ -1959,7 +2376,9 @@ ${promptBlocks.join('\n\n')}`;
         return;
       }
 
-      const source = resolveOptionalStageSource(sourceId, branchProposalSource);
+      const source =
+        resolveOptionalStageSource(sourceId, stageSource) ??
+        resolveOptionalStageSource(sourceId, branchProposalSource);
       const aiClient = resolveAiClient();
       if (!aiClient.ok) {
         res.status(aiClient.status).json({ error: aiClient.error });
@@ -1983,11 +2402,12 @@ ${promptBlocks.join('\n\n')}`;
 
   app.post('/api/gemini/scrutinize-stage-all', async (req, res) => {
     try {
-      const { docType, sections, sourceId, branchProposalSource, context } = req.body as {
+      const { docType, sections, sourceId, branchProposalSource, stageSource, context } = req.body as {
         docType: StageMemoDocType;
         sections?: StageScrutinySectionKey[];
         sourceId?: string;
         branchProposalSource?: IncomingBranchProposalSource | null;
+        stageSource?: IncomingBranchProposalSource | null;
         context?: Record<string, unknown>;
       };
 
@@ -2006,7 +2426,9 @@ ${promptBlocks.join('\n\n')}`;
         return;
       }
 
-      const source = resolveOptionalStageSource(sourceId, branchProposalSource);
+      const source =
+        resolveOptionalStageSource(sourceId, stageSource) ??
+        resolveOptionalStageSource(sourceId, branchProposalSource);
       const aiClient = resolveAiClient();
       if (!aiClient.ok) {
         res.status(aiClient.status).json({ error: aiClient.error });

@@ -1,8 +1,17 @@
 import React from 'react';
 import type { ResolvedICMemo } from '../types/memo';
 
+export interface CarriedStageInsertSection {
+  sectionNumber: number;
+  heading: string;
+  text: string;
+}
+
 interface CarriedICMemoBodyProps {
   memo: ResolvedICMemo;
+  insertedAfterSec15?: CarriedStageInsertSection[];
+  particularsSectionNumber?: number;
+  termsSectionNumber?: number;
 }
 
 const TokenVal: React.FC<{ ph: Record<string, string>; code: string; bold?: boolean }> = ({
@@ -21,7 +30,12 @@ const TokenVal: React.FC<{ ph: Record<string, string>; code: string; bold?: bool
   return <span className={bold ? 'font-bold' : ''}>{val}</span>;
 };
 
-export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({ memo }) => {
+export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({
+  memo,
+  insertedAfterSec15 = [],
+  particularsSectionNumber = 16,
+  termsSectionNumber = 17,
+}) => {
   const ph = memo.placeholders;
   const bp = memo.branchProposal;
 
@@ -960,11 +974,21 @@ export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({ memo }) =>
           <p className="font-bold underline">15. Observation and Recommendation of SAMD:</p>
           <div className="pl-4 whitespace-pre-line">{memo.samdObservation || '—'}</div>
         </div>
+        {insertedAfterSec15.map((sec) => (
+          <div key={`${sec.sectionNumber}-${sec.heading}`}>
+            <p className="font-bold underline">
+              {sec.sectionNumber}. {sec.heading}:
+            </p>
+            <div className="pl-4 whitespace-pre-line">{sec.text || '—'}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Section 16 */}
+      {/* Section 16 (or 17/18 in MEC/Board) */}
       <div className="space-y-1">
-        <p className="font-bold underline text-[10pt]">16. Particulars of the facility:</p>
+        <p className="font-bold underline text-[10pt]">
+          {particularsSectionNumber}. Particulars of the facility:
+        </p>
         <table className="w-full table-fixed text-[10pt] border border-dotted border-black">
           <colgroup>
             <col className="w-[5%]" />
@@ -1029,9 +1053,11 @@ export const CarriedICMemoBody: React.FC<CarriedICMemoBodyProps> = ({ memo }) =>
         </table>
       </div>
 
-      {/* Section 17 */}
+      {/* Section 17 (or 18/19 in MEC/Board) */}
       <div className="space-y-1 text-[10pt]">
-        <p className="font-bold underline">17. Special Term(s) &amp; Condition(s):</p>
+        <p className="font-bold underline">
+          {termsSectionNumber}. Special Term(s) &amp; Condition(s):
+        </p>
         <p className="pl-4">
           If the proposal approved, the branch is advised to comply the following special terms and conditions:
         </p>

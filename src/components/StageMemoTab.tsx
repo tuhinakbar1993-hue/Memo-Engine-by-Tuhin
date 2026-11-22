@@ -5,11 +5,13 @@ import {
   CheckCircle2,
   Download,
   FileCheck2,
+  FileUp,
   Loader2,
   Pencil,
   RefreshCw,
   RotateCcw,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import {
   STAGE_SECTION_LABELS,
@@ -25,6 +27,7 @@ import type {
   StageMemoDocType,
   StageMemoInputs,
   StageScrutinySectionKey,
+  StageSourceUploadState,
 } from '../types/memo';
 import { CarriedICMemoBody } from './CarriedICMemoBody';
 import { TemplateManagerPanel } from './TemplateManagerPanel';
@@ -39,6 +42,9 @@ interface StageMemoTabProps {
   stageBatchScrutiny: StageBatchScrutinyState;
   hasBranchProposalFile: boolean;
   hasAnyCaseData: boolean;
+  stageSourceUpload: StageSourceUploadState;
+  onUploadStageSource: (docType: StageMemoDocType, file: File) => Promise<void>;
+  onClearStageSource: (docType: StageMemoDocType) => void;
   aiError: string | null;
   onStageInputChange: (field: keyof StageMemoInputs, value: string) => void;
   onUpdateStageAiSection: (
@@ -148,6 +154,9 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
   stageBatchScrutiny,
   hasBranchProposalFile,
   hasAnyCaseData,
+  stageSourceUpload,
+  onUploadStageSource,
+  onClearStageSource,
   aiError,
   onStageInputChange,
   onUpdateStageAiSection,
@@ -178,6 +187,29 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
   >({});
   const [confirmOverwriteSection, setConfirmOverwriteSection] =
     useState<StageScrutinySectionKey | null>(null);
+  const [isDraggingStageSource, setIsDraggingStageSource] = useState(false);
+
+  const stageUploadConfig =
+    docType === 'mec'
+      ? {
+          title: 'Upload Completed IC Memo (Auto-Extract & Prepare MEC Memo)',
+          desc: 'Upload a finalized IC Memo (.pdf, .docx, .xlsx, or image). Gemini AI will extract all client particulars, facility details, tables, justifications, and SAMD observations to populate this MEC Memo automatically.',
+          buttonLabel: 'Upload Completed IC Memo',
+          sourceLabel: 'Completed IC Memo',
+        }
+      : docType === 'board'
+        ? {
+            title: 'Upload Completed MEC Memo (Auto-Extract & Prepare Board Memo)',
+            desc: 'Upload a finalized MEC Memo (.pdf, .docx, .xlsx, or image). Gemini AI will extract all client details, financial figures, IC & MEC recommendations, and observations to populate this Board Memo automatically.',
+            buttonLabel: 'Upload Completed MEC Memo',
+            sourceLabel: 'Completed MEC Memo',
+          }
+        : {
+            title: 'Upload Completed Board Memo (AI Scrutiny & Sanction Preparation)',
+            desc: 'Upload a finalized Board Memo (.pdf, .docx, .xlsx, or image). Gemini AI will extract, cross-verify figures & approved conditions, flag any inconsistencies, and prepare the Head Office Sanction format automatically.',
+            buttonLabel: 'Upload Completed Board Memo',
+            sourceLabel: 'Completed Board Memo',
+          };
 
   useEffect(() => {
     if (applySignal > 0) {
@@ -208,16 +240,6 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
   const buildFallbackDisplay = (key: StageScrutinySectionKey): string => {
     const val = stageMemo.stageSections[key];
     if (val && val.trim() !== '') return val;
-    if (key === 'mecIcRecommendation') {
-      const no = stageInputs.icMemoNumber.trim() || '[Chronologic Order of the IC Memo pending]';
-      const dt = stageInputs.icMemoDate.trim() || '[IC Memo Date pending]';
-      return `The proposal was placed before the Investment Committee (IC) vide IC Memo (Chronologic Order: ${no}) dated ${dt}. Pending AI scrutiny or manual entry of the IC's formal recommendation.`;
-    }
-    if (key === 'boardMecRecommendation') {
-      const no = stageInputs.mecMemoNumber.trim() || '[Chronologic Order of the MEC Memo pending]';
-      const dt = stageInputs.mecMemoDate.trim() || '[MEC Memo Date pending]';
-      return `The Management Executive Committee (MEC) reviewed the exit-with-waiver proposal vide MEC Memo (Chronologic Order: ${no}) dated ${dt}. Pending AI scrutiny or manual entry of the MEC's formal recommendation.`;
-    }
     if (key === 'sanctionBoardAuthority') {
       const no = stageInputs.boardMemoNumber.trim() || '[Chronologic Order of the Board Memo pending]';
       const dt = stageInputs.boardMemoDate.trim() || '[Board Memo Date pending]';
@@ -583,11 +605,12 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
         </div>
       )}
 
-      {!hasAnyCaseData && !hasBranchProposalFile && (
+      {!hasAnyCaseData && !hasBranchProposalFile && !stageSourceUpload.uploaded && (
         <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-2.5 text-xs flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
           <span>
-            Upload the case documents (including the <span className="font-semibold">Branch Proposal</span>) on the Manual Inputs tab first so all IC Memo data carries forward cleanly into {meta.title}.
+            Upload the case documents on the Manual Inputs tab, OR upload the{' '}
+            <span className="font-semibold">{stageUploadConfig.sourceLabel}</span> directly below so all case particulars extract and populate cleanly into {meta.title}.
           </span>
         </div>
       )}
@@ -597,6 +620,146 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
           {aiError}
         </div>
       )}
+
+      {/* Upload Completed Previous-Stage Memo & AI Extraction Card */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDraggingStageSource(true);
+        }}
+        onDragLeave={() => setIsDraggingStageSource(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDraggingStageSource(false);
+          const dropped = e.dataTransfer.files?.[0];
+          if (dropped) void onUploadStageSource(docType, dropped);
+        }}
+        className={`bg-white border rounded-lg p-5 space-y-3 transition-colors ${
+          isDraggingStageSource ? 'border-emerald-700 bg-emerald-50/40' : 'border-slate-200'
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1 max-w-3xl">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-display text-sm font-semibold text-slate-900">
+                {stageUploadConfig.title}
+              </h3>
+              {stageSourceUpload.uploaded && !stageSourceUpload.processing && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-900 border border-emerald-200 rounded">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                  <span>Extracted ({stageSourceUpload.extractedFieldCount} items)</span>
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-600">{stageUploadConfig.desc}</p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <label className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer whitespace-nowrap">
+              {stageSourceUpload.processing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileUp className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {stageSourceUpload.processing
+                  ? 'Scrutinizing...'
+                  : stageSourceUpload.uploaded
+                    ? `Replace ${stageUploadConfig.sourceLabel}`
+                    : stageUploadConfig.buttonLabel}
+              </span>
+              <input
+                type="file"
+                accept=".pdf,.docx,.xlsx,.xls,image/*"
+                disabled={stageSourceUpload.processing}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void onUploadStageSource(docType, file);
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
+            </label>
+
+            {stageSourceUpload.uploaded && !stageSourceUpload.processing && (
+              <button
+                type="button"
+                onClick={() => onClearStageSource(docType)}
+                className="inline-flex items-center gap-1 px-2.5 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer"
+                title="Remove uploaded source memo metadata"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear File</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {stageSourceUpload.processing && (
+          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2 text-xs text-emerald-950">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-800 shrink-0" />
+            <span>
+              {stageSourceUpload.stage || `Reading and scrutinizing ${stageSourceUpload.fileName}...`}
+            </span>
+          </div>
+        )}
+
+        {stageSourceUpload.error && (
+          <div className="bg-red-50 border border-red-200 rounded-md px-3 py-2 text-xs text-red-800">
+            {stageSourceUpload.error}
+          </div>
+        )}
+
+        {stageSourceUpload.uploaded && !stageSourceUpload.processing && (
+          <div className="bg-slate-50 border border-slate-200 rounded-md p-3 space-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-slate-900">
+                Source File: <span className="font-mono">{stageSourceUpload.fileName}</span>
+              </span>
+              {stageSourceUpload.extractedAt && (
+                <span className="text-[11px] text-slate-500">
+                  Extracted at {stageSourceUpload.extractedAt}
+                </span>
+              )}
+            </div>
+
+            {stageSourceUpload.audit && (
+              <div className="space-y-1.5">
+                {stageSourceUpload.audit.summary && (
+                  <p className="text-slate-700 leading-relaxed">{stageSourceUpload.audit.summary}</p>
+                )}
+
+                {stageSourceUpload.audit.verifiedPoints.length > 0 && (
+                  <div className="text-[11px] text-emerald-950 bg-emerald-50/80 border border-emerald-200 rounded px-2.5 py-2 space-y-0.5">
+                    <p className="font-semibold">Verified &amp; Carried Forward:</p>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {stageSourceUpload.audit.verifiedPoints.map((pt, idx) => (
+                        <li key={idx}>{pt}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {stageSourceUpload.audit.discrepanciesOrMissing.length > 0 && (
+                  <div className="text-[11px] text-amber-950 bg-amber-50 border border-amber-300 rounded px-2.5 py-2 space-y-0.5">
+                    <p className="font-semibold flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                      <span>
+                        Missing / Inconsistent Information Flagged ({stageSourceUpload.audit.discrepanciesOrMissing.length}):
+                      </span>
+                    </p>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {stageSourceUpload.audit.discrepanciesOrMissing.map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Stage Inputs & Chained Reference Card */}
       <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
@@ -878,8 +1041,11 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
           {sectionKeys.map((secKey) => {
             const label = STAGE_SECTION_LABELS[secKey];
             const isEditing = Boolean(editingSections[secKey]);
-            const rawVal = stageAiSections[secKey] ?? '';
             const displayText = buildFallbackDisplay(secKey);
+            const rawVal = stageAiSections[secKey] ?? displayText;
+            const isAutoInputBound =
+              (secKey === 'mecIcRecommendation' || secKey === 'boardMecRecommendation') &&
+              !stageManualEditedSections[secKey];
 
             return (
               <div
@@ -887,8 +1053,19 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
                 className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/40 space-y-2"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-xs font-bold text-slate-900">{label}</h4>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-xs font-bold text-slate-900">
+                      {secKey === 'mecIcRecommendation'
+                        ? '16. Recommendation of the Investment Committee (IC)'
+                        : secKey === 'boardMecRecommendation'
+                          ? '17. Management Executive Committee (MEC) Recommendation'
+                          : label}
+                    </h4>
+                    {isAutoInputBound && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-900 border border-emerald-200 rounded">
+                        Auto-Synced from Inputs
+                      </span>
+                    )}
                     {stageManualEditedSections[secKey] && (
                       <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-900 border border-amber-200 rounded">
                         Manually Edited
@@ -1113,57 +1290,89 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
             </p>
 
             {/* Full Carried-Forward IC Memo Tables & Sections (100% Preserved Without Omission) */}
-            <CarriedICMemoBody memo={ic} />
+            {docType === 'mec' && (
+              <CarriedICMemoBody
+                memo={ic}
+                insertedAfterSec15={[
+                  {
+                    sectionNumber: 16,
+                    heading: 'Recommendation of the Investment Committee (IC)',
+                    text: stageMemo.stageSections.mecIcRecommendation,
+                  },
+                ]}
+                particularsSectionNumber={17}
+                termsSectionNumber={18}
+              />
+            )}
 
-            {/* Prior Committee Recommendations Carried Forward */}
-            {docType === 'board' && stageMemo.stageSections.mecIcRecommendation && (
-              <div className="space-y-1 pt-2">
-                <p className="font-bold underline text-[10pt]">
-                  Recommendation of the Investment Committee (IC) (Carried Forward):
-                </p>
-                <p className="text-[10pt] whitespace-pre-line leading-snug">
-                  {stageMemo.stageSections.mecIcRecommendation}
-                </p>
-              </div>
+            {docType === 'board' && (
+              <CarriedICMemoBody
+                memo={ic}
+                insertedAfterSec15={[
+                  {
+                    sectionNumber: 16,
+                    heading: 'Recommendation of the Investment Committee (IC)',
+                    text: stageMemo.stageSections.mecIcRecommendation,
+                  },
+                  {
+                    sectionNumber: 17,
+                    heading: 'Management Executive Committee (MEC) Recommendation',
+                    text: stageMemo.stageSections.boardMecRecommendation,
+                  },
+                ]}
+                particularsSectionNumber={18}
+                termsSectionNumber={19}
+              />
             )}
 
             {docType === 'sanction' && (
-              <div className="space-y-2 pt-2">
-                {stageMemo.stageSections.mecIcRecommendation && (
-                  <div className="space-y-1">
-                    <p className="font-bold underline text-[10pt]">
-                      Recommendation of the Investment Committee (IC) (Carried Forward):
-                    </p>
-                    <p className="text-[10pt] whitespace-pre-line leading-snug">
-                      {stageMemo.stageSections.mecIcRecommendation}
-                    </p>
-                  </div>
-                )}
-                {stageMemo.stageSections.boardMecRecommendation && (
-                  <div className="space-y-1">
-                    <p className="font-bold underline text-[10pt]">
-                      Recommendation of the Management Executive Committee (MEC) (Carried Forward):
-                    </p>
-                    <p className="text-[10pt] whitespace-pre-line leading-snug">
-                      {stageMemo.stageSections.boardMecRecommendation}
-                    </p>
-                  </div>
-                )}
-              </div>
+              <>
+                <CarriedICMemoBody memo={ic} />
+                <div className="space-y-2 pt-2">
+                  {stageMemo.stageSections.mecIcRecommendation && (
+                    <div className="space-y-1">
+                      <p className="font-bold underline text-[10pt]">
+                        Recommendation of the Investment Committee (IC) (Carried Forward):
+                      </p>
+                      <p className="text-[10pt] whitespace-pre-line leading-snug">
+                        {stageMemo.stageSections.mecIcRecommendation}
+                      </p>
+                    </div>
+                  )}
+                  {stageMemo.stageSections.boardMecRecommendation && (
+                    <div className="space-y-1">
+                      <p className="font-bold underline text-[10pt]">
+                        Management Executive Committee (MEC) Recommendation (Carried Forward):
+                      </p>
+                      <p className="text-[10pt] whitespace-pre-line leading-snug">
+                        {stageMemo.stageSections.boardMecRecommendation}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
-            {/* Stage Sections Rendered Inside the Official Sheet */}
+            {/* Additional Stage Sections Rendered Inside the Official Sheet */}
             <div className="space-y-2.5 pt-2">
-              {sectionKeys.map((secKey, idx) => (
-                <div key={secKey} className="space-y-1">
-                  <p className="font-bold underline text-[10pt]">
-                    {idx + 1}. {STAGE_SECTION_LABELS[secKey]}:
-                  </p>
-                  <p className="text-[10pt] whitespace-pre-line leading-snug">
-                    {buildFallbackDisplay(secKey) || '—'}
-                  </p>
-                </div>
-              ))}
+              {sectionKeys
+                .filter(
+                  (secKey) =>
+                    !(
+                      (docType === 'mec' && secKey === 'mecIcRecommendation') ||
+                      (docType === 'board' && secKey === 'boardMecRecommendation')
+                    )
+                )
+                .map((secKey) => (
+                  <div key={secKey} className="space-y-1">
+                    <p className="font-bold underline text-[10pt]">
+                      {STAGE_SECTION_LABELS[secKey]}:
+                    </p>
+                    <p className="text-[10pt] whitespace-pre-line leading-snug">
+                      {buildFallbackDisplay(secKey) || '—'}
+                    </p>
+                  </div>
+                ))}
             </div>
 
             {/* Closing Placement Box & Signatories */}

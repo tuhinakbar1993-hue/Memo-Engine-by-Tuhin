@@ -706,8 +706,22 @@ export default function App() {
         overrides: saved.overrides || {},
         manualEditedSections: saved.manualEditedSections || {},
         stageInputs: { ...INITIAL_STAGE_INPUTS, ...(saved.stageInputs || {}) },
-        stageAiSections: { ...INITIAL_STAGE_AI_SECTIONS, ...(saved.stageAiSections || {}) },
-        stageManualEditedSections: saved.stageManualEditedSections || {},
+        stageAiSections: {
+          mecIcRecommendation: saved.stageAiSections?.mecIcRecommendation ?? null,
+          boardMecRecommendation: saved.stageAiSections?.boardMecRecommendation ?? null,
+          sanctionCrossVerifiedSummary: saved.stageAiSections?.sanctionCrossVerifiedSummary ?? null,
+        },
+        stageManualEditedSections: {
+          ...(saved.stageManualEditedSections?.mecIcRecommendation !== undefined
+            ? { mecIcRecommendation: saved.stageManualEditedSections.mecIcRecommendation }
+            : {}),
+          ...(saved.stageManualEditedSections?.boardMecRecommendation !== undefined
+            ? { boardMecRecommendation: saved.stageManualEditedSections.boardMecRecommendation }
+            : {}),
+          ...(saved.stageManualEditedSections?.sanctionCrossVerifiedSummary !== undefined
+            ? { sanctionCrossVerifiedSummary: saved.stageManualEditedSections.sanctionCrossVerifiedSummary }
+            : {}),
+        },
         stageSourceUploads: hydratedStageUploads,
       };
       caseRef.current = hydrated;
@@ -2038,13 +2052,7 @@ export default function App() {
       setStageAiSectionsSync((prev) => {
         const next = { ...prev };
         for (const k of [
-          'mecExecutiveSummary',
-          'mecSamdRecommendation',
-          'boardProposalRationale',
-          'boardResolutionTerms',
-          'sanctionBoardAuthority',
           'sanctionCrossVerifiedSummary',
-          'sanctionSpecialConditions',
         ] as StageScrutinySectionKey[]) {
           const val = (ts[k] ?? '').trim();
           if (val && !stageEdits[k]) {

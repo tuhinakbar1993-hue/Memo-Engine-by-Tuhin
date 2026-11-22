@@ -322,32 +322,20 @@ export const INITIAL_STAGE_INPUTS: StageMemoInputs = {
 
 export const INITIAL_STAGE_AI_SECTIONS: StageAiSectionsData = {
   mecIcRecommendation: null,
-  mecExecutiveSummary: null,
-  mecSamdRecommendation: null,
   boardMecRecommendation: null,
-  boardProposalRationale: null,
-  boardResolutionTerms: null,
-  sanctionBoardAuthority: null,
   sanctionCrossVerifiedSummary: null,
-  sanctionSpecialConditions: null,
 };
 
 export const STAGE_SECTIONS_BY_DOC: Record<StageMemoDocType, StageScrutinySectionKey[]> = {
-  mec: ['mecIcRecommendation', 'mecExecutiveSummary', 'mecSamdRecommendation'],
-  board: ['boardMecRecommendation', 'boardProposalRationale', 'boardResolutionTerms'],
-  sanction: ['sanctionBoardAuthority', 'sanctionCrossVerifiedSummary', 'sanctionSpecialConditions'],
+  mec: ['mecIcRecommendation'],
+  board: ['boardMecRecommendation'],
+  sanction: ['sanctionCrossVerifiedSummary'],
 };
 
 export const STAGE_SECTION_LABELS: Record<StageScrutinySectionKey, string> = {
   mecIcRecommendation: 'Recommendation of the Investment Committee (IC)',
-  mecExecutiveSummary: 'Executive Appraisal & Waiver Rationale for MEC',
-  mecSamdRecommendation: 'Observation and Recommendation of SAMD for MEC',
   boardMecRecommendation: 'Management Executive Committee (MEC) Recommendation',
-  boardProposalRationale: 'Board Memorandum Summary & Financial Justification',
-  boardResolutionTerms: 'Proposed Board Resolution & Approval Terms',
-  sanctionBoardAuthority: 'Board Approval Reference & Sanction Basis',
   sanctionCrossVerifiedSummary: 'AI Cross-Verified Facility & Liability Confirmation',
-  sanctionSpecialConditions: 'Operative Terms, Conditions & Redemption Covenants',
 };
 
 export function formatStageOrder26(rawOrder: string, fallbackToken: string): string {
@@ -401,14 +389,8 @@ export function resolveStageMemo(
 
   const stageSections: Record<StageScrutinySectionKey, string> = {
     mecIcRecommendation: mecIcText,
-    mecExecutiveSummary: (stageAi.mecExecutiveSummary ?? '').trim(),
-    mecSamdRecommendation: (stageAi.mecSamdRecommendation ?? '').trim(),
     boardMecRecommendation: boardMecText,
-    boardProposalRationale: (stageAi.boardProposalRationale ?? '').trim(),
-    boardResolutionTerms: (stageAi.boardResolutionTerms ?? '').trim(),
-    sanctionBoardAuthority: (stageAi.sanctionBoardAuthority ?? '').trim(),
     sanctionCrossVerifiedSummary: (stageAi.sanctionCrossVerifiedSummary ?? '').trim(),
-    sanctionSpecialConditions: (stageAi.sanctionSpecialConditions ?? '').trim(),
   };
 
   return {

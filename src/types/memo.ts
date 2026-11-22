@@ -394,14 +394,8 @@ export type StageMemoDocType = 'mec' | 'board' | 'sanction';
 
 export type StageScrutinySectionKey =
   | 'mecIcRecommendation'
-  | 'mecExecutiveSummary'
-  | 'mecSamdRecommendation'
   | 'boardMecRecommendation'
-  | 'boardProposalRationale'
-  | 'boardResolutionTerms'
-  | 'sanctionBoardAuthority'
-  | 'sanctionCrossVerifiedSummary'
-  | 'sanctionSpecialConditions';
+  | 'sanctionCrossVerifiedSummary';
 
 export interface StageMemoInputs {
   icMemoNumber: string;

@@ -84,14 +84,8 @@ type StageMemoDocType = 'mec' | 'board' | 'sanction';
 
 type StageScrutinySectionKey =
   | 'mecIcRecommendation'
-  | 'mecExecutiveSummary'
-  | 'mecSamdRecommendation'
   | 'boardMecRecommendation'
-  | 'boardProposalRationale'
-  | 'boardResolutionTerms'
-  | 'sanctionBoardAuthority'
-  | 'sanctionCrossVerifiedSummary'
-  | 'sanctionSpecialConditions';
+  | 'sanctionCrossVerifiedSummary';
 
 function strField(description: string): Schema {
   return { type: Type.STRING, description };
@@ -1728,9 +1722,9 @@ ${resolved.source.rawText}${contextSuffix}`,
 
   const VALID_STAGE_DOCS = new Set<StageMemoDocType>(['mec', 'board', 'sanction']);
   const STAGE_SECTIONS_MAP: Record<StageMemoDocType, StageScrutinySectionKey[]> = {
-    mec: ['mecIcRecommendation', 'mecExecutiveSummary', 'mecSamdRecommendation'],
-    board: ['boardMecRecommendation', 'boardProposalRationale', 'boardResolutionTerms'],
-    sanction: ['sanctionBoardAuthority', 'sanctionCrossVerifiedSummary', 'sanctionSpecialConditions'],
+    mec: ['mecIcRecommendation'],
+    board: ['boardMecRecommendation'],
+    sanction: ['sanctionCrossVerifiedSummary'],
   };
 
   function getStageSectionConfig(
@@ -1768,20 +1762,6 @@ Output ONLY that clean official sentence with no AI preambles, no markdown aster
           schema,
         };
       }
-      case 'mecExecutiveSummary':
-        return {
-          prompt: `${icCentralRule}
-Scrutinize the finalized/uploaded IC Memo (including Contents of the Client's Prayer, Justification, Liability Positions, CIB Status, Legal/Audit Status, Security Valuation MV/FSV, Source of Repayment, Branch Visit Report, Branch Recommendation, and SAMD Observation) alongside any Branch Proposal and write Section "Executive Appraisal & Waiver Rationale for MEC".
-Write 2 concise, structured formal banking paragraphs synthesizing the borrower's distress, security coverage, Cost of Fund surplus/deficit vs maximum permissible waiver, and strategic recovery benefit for the Management Executive Committee strictly preserving all IC Memo facts and figures. Clean official prose only, no asterisks.`,
-          schema,
-        };
-      case 'mecSamdRecommendation':
-        return {
-          prompt: `${icCentralRule}
-Write Section "Observation and Recommendation of SAMD for MEC" placing this Exit with Waiver proposal before the Management Executive Committee after Investment Committee scrutiny (explicitly referencing Chronologic Order of the IC Memo "${icNo}" dated "${icDt}" if provided).
-Write 3 to 4 crisp numbered formal points ("1. ...", "2. ...", "3. ...") summarizing verified liability & COF recovery protection carried forward from the IC Memo, compliance with special terms & conditions, and formal recommendation for MEC approval/onward placement before the Board. Clean official prose only.`,
-          schema,
-        };
       case 'boardMecRecommendation': {
         const mecOrderToken = /\/26$/i.test(mecNo) ? mecNo : `${mecNo}/26`;
         return {
@@ -1793,38 +1773,11 @@ Output ONLY that clean official sentence with no AI preambles, no markdown aster
           schema,
         };
       }
-      case 'boardProposalRationale':
-        return {
-          prompt: `${icCentralRule}
-Using the finalized IC Memo and carried-forward MEC Memo data (alongside the Branch Proposal), write Section "Board Memorandum Summary & Financial Justification" for submission to the Board of Directors.
-Cover: (1) account classification, CIB/legal/regulatory verification established in the IC Memo, (2) financial recovery & Cost of Fund protection analysis (Principal #7#, Charges #8#, COF #31#, Breakup Total #32# vs Settlement Amount #27#, Max Waiver #44# vs Proposed Waiver #4#), and (3) why full and final settlement with waiver maximizes timely cash recovery over prolonged recovery proceedings. Clean formal banking prose only.`,
-          schema,
-        };
-      case 'boardResolutionTerms':
-        return {
-          prompt: `${icCentralRule}
-Write Section "Proposed Board Resolution & Approval Terms" for the Board Memorandum, framing a formal resolution for approval by the Board of Directors of Sammilito Islami Bank PLC for the proposed Exit with Waiver (Account #2#, Branch #3#, Settlement Amount #27# Million, Waiver #4# Million, Deadline #28#; referencing MEC Chronologic Order ${mecNo} dated ${mecDt}) subject to compliance with Special Terms & Conditions and Bangladesh Bank BRPD Circular Letter No. 23 dated 29.06.2026. Clean formal banking prose only.`,
-          schema,
-        };
-      case 'sanctionBoardAuthority':
-        return {
-          prompt: `${icCentralRule}
-Write Section "Board Approval Reference & Sanction Basis" for the Head Office Sanction Letter.
-You MUST explicitly incorporate the Chronologic Order of the Board Memo "${boardNo}" and Board Memo Date "${boardDt}" (and preserve chain references to Chronologic Order of the MEC Memo "${mecNo}" dated "${mecDt}" and Chronologic Order of the IC Memo "${icNo}" dated "${icDt}" where available), formally conveying Head Office sanction for the approved Exit with Waiver facility for A/C ${'#2#'} of ${'#3#'} Branch under BRPD Circular Letter No. 23 dated 29.06.2026. Clean official Head Office Sanction Letter prose only.`,
-          schema,
-        };
       case 'sanctionCrossVerifiedSummary':
         return {
           prompt: `${icCentralRule}
 Perform an AI cross-verification across ALL uploaded source documents (Outstanding, Party Performance, Overdue, Account Statement, CIB Report, Cost of Fund, Branch Proposal) and the chained IC -> MEC -> Board memo data to write Section "AI Cross-Verified Facility & Liability Confirmation" for the Sanction Letter.
 Confirm exact verified figures in Million BDT (NET Outstanding #25#, Principal #7#, Charges #8#, Down Payment #35# in A/C #36#, Cost of Fund #31#, Breakup Total #32#, Proposed Waiver #4#, Settlement/Exit Amount #27#, Settlement Period #28#, Security MV #33# & FSV #34#) and confirm full consistency with the IC Memo, Branch Proposal, and Board sanction parameters. Clean official prose only; flag any missing verification input strictly inside "insufficientReason".`,
-          schema,
-        };
-      case 'sanctionSpecialConditions':
-        return {
-          prompt: `${icCentralRule}
-Write Section "Operative Terms, Conditions & Redemption Covenants" tailored for this Head Office Sanction Letter based on the verified IC Memo particulars, security position, legal/CIB status, and Board Memo (Chronologic Order: ${boardNo} dated ${boardDt}).
-Write crisp numbered operative covenants ("i. ...", "ii. ...", etc.) covering adjustment of settlement within ${'#28#'}, determination of final up-to-date settlement balance at execution date, clearance of all direct/indirect/non-funded (L/C, BG, Credit Card) liabilities prior to collateral redemption, non-reduction of profit rate to 0.00% until full adjustment, legal/suit withdrawal cost recovery, and automatic cancellation on default. Clean official banking prose only.`,
           schema,
         };
     }
@@ -2248,22 +2201,10 @@ ${promptBlocks.join('\n\n')}`;
           targetStageSections: {
             type: Type.OBJECT,
             properties: {
-              mecExecutiveSummary: strField('For targetDocType mec: Executive Appraisal & Waiver Rationale for MEC; else ""'),
-              mecSamdRecommendation: strField('For targetDocType mec: Observation and Recommendation of SAMD for MEC; else ""'),
-              boardProposalRationale: strField('For targetDocType board: Board Memorandum Summary & Financial Justification; else ""'),
-              boardResolutionTerms: strField('For targetDocType board: Proposed Board Resolution & Approval Terms; else ""'),
-              sanctionBoardAuthority: strField('For targetDocType sanction: Board Approval Reference & Sanction Basis; else ""'),
               sanctionCrossVerifiedSummary: strField('For targetDocType sanction: AI Cross-Verified Facility & Liability Confirmation; else ""'),
-              sanctionSpecialConditions: strField('For targetDocType sanction: Operative Terms, Conditions & Redemption Covenants (tailored to Sanction Letter format); else ""'),
             },
             required: [
-              'mecExecutiveSummary',
-              'mecSamdRecommendation',
-              'boardProposalRationale',
-              'boardResolutionTerms',
-              'sanctionBoardAuthority',
               'sanctionCrossVerifiedSummary',
-              'sanctionSpecialConditions',
             ],
           },
           auditFindings: {
@@ -2298,19 +2239,15 @@ ${promptBlocks.join('\n\n')}`;
       const stageSpecificInstruction =
         targetDocType === 'mec'
           ? `TARGET STAGE: Prepare the MEC Memo from this uploaded completed IC Memo.
-1. Extract ALL client particulars, account numbers (#2#, #69#), branch (#3#), dates (#1#, #68#), facility figures (#4#, #5#, #6#, #7#, #8#, #10#, #11#, #12#, #25#, #27#, #28#, #31#, #32#, #33#, #34#, #35#, #36#, #42#, #44#, #45#, #47#, #55#, #56#, #58#, #59#, #60#, #62#, #64#, #65#), structured tables (Sections 2-11), and all narratives (Justification #51#, Prayer, Branch Visit, Branch Rec, ICCD Rec, SAMD Observation) faithfully without omitting or altering figures.
-2. In "targetStageSections", populate "mecExecutiveSummary" (2 structured formal paragraphs for MEC appraisal) and "mecSamdRecommendation" (3-4 numbered formal SAMD points for MEC) grounded strictly in the uploaded IC Memo.`
+1. Extract ALL client particulars, account numbers (#2#, #69#), branch (#3#), dates (#1#, #68#), facility figures (#4#, #5#, #6#, #7#, #8#, #10#, #11#, #12#, #25#, #27#, #28#, #31#, #32#, #33#, #34#, #35#, #36#, #42#, #44#, #45#, #47#, #55#, #56#, #58#, #59#, #60#, #62#, #64#, #65#), structured tables (Sections 2-11), and all narratives (Justification #51#, Prayer, Branch Visit, Branch Rec, ICCD Rec, SAMD Observation) faithfully without omitting or altering figures.`
           : targetDocType === 'board'
             ? `TARGET STAGE: Prepare the Board Memo from this uploaded completed MEC Memo.
-1. Extract ALL carried-forward client particulars, facility details, financial figures, tables (Sections 2-11), narratives (Sections 1, 8, 12-15), IC recommendation ("carriedMecIcRecommendation"), and any IC/MEC memo chronological orders & dates faithfully.
-2. In "targetStageSections", populate "boardProposalRationale" (Board Memorandum Summary & Financial Justification) and "boardResolutionTerms" (Proposed Board Resolution & Approval Terms) grounded strictly in the uploaded MEC Memo.`
+1. Extract ALL carried-forward client particulars, facility details, financial figures, tables (Sections 2-11), narratives (Sections 1, 8, 12-15), IC recommendation ("carriedMecIcRecommendation"), and any IC/MEC memo chronological orders & dates faithfully.`
             : `TARGET STAGE: Prepare the Head Office Sanction Letter from this uploaded completed Board Memo through deep AI scrutiny and cross-verification.
 1. Extract ALL client particulars, facility details, approved financial figures, special terms & conditions, Board/MEC/IC references, and tables accurately.
 2. Cross-verify arithmetic & textual consistency across all sections of the uploaded Board Memo (e.g., Principal + Charges + Charged Profit + Comp vs NET Outstanding; Breakup Total vs Settlement Amount & Cost of Fund; Waiver + Settlement vs Outstanding; Down Payment account & amount; Special Terms compliance). Report ANY discrepancy, missing figure, or conflict honestly in "auditFindings.discrepanciesOrMissing" without ever fabricating data!
 3. Adapt and organize the approved data into formal Head Office Sanction Letter format inside "targetStageSections":
-   - "sanctionBoardAuthority": Board Approval Reference & Sanction Basis (incorporating Board/MEC/IC memo refs & dates).
-   - "sanctionCrossVerifiedSummary": AI Cross-Verified Facility & Liability Confirmation (exact Million BDT breakdown & cross-check outcome).
-   - "sanctionSpecialConditions": Operative Terms, Conditions & Redemption Covenants (formal numbered Head Office covenants "i. ...", "ii. ...", tailored specifically for Sanction execution).`;
+   - "sanctionCrossVerifiedSummary": AI Cross-Verified Facility & Liability Confirmation (exact Million BDT breakdown & cross-check outcome).`;
 
       const prompt = `You are a Senior Credit Analyst at SAMD, Head Office, Sammilito Islami Bank PLC.
 Carefully read, extract, identify, and scrutinize EVERY page, table, and narrative from the uploaded ${sourceRole} ("${source.fileName}") to prepare the ${targetRole}.

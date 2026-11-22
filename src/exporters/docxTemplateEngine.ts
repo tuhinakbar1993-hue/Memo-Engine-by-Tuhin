@@ -410,14 +410,8 @@ export function buildTemplateTokenMap(
     sanctionNo: si?.sanctionRefNumber || '',
     sanctionDate: si?.sanctionDate || '',
     mecIcRecommendation: ss?.mecIcRecommendation || '',
-    mecExecutiveSummary: ss?.mecExecutiveSummary || '',
-    mecSamdRecommendation: ss?.mecSamdRecommendation || '',
     boardMecRecommendation: ss?.boardMecRecommendation || '',
-    boardProposalRationale: ss?.boardProposalRationale || '',
-    boardResolutionTerms: ss?.boardResolutionTerms || '',
-    sanctionBoardAuthority: ss?.sanctionBoardAuthority || '',
     sanctionCrossVerifiedSummary: ss?.sanctionCrossVerifiedSummary || '',
-    sanctionSpecialConditions: ss?.sanctionSpecialConditions || '',
   };
 
   const optionalTokens: Record<string, string> = {};
@@ -512,7 +506,7 @@ function isSectionBoundaryText(text: string): boolean {
   }
   if (/^(?:1[0-7]|[1-9])\s*[.)]\s*[A-Za-z]/.test(t)) return true;
   if (
-    /^(?:Nature\s+of\s+Business|Liability\s+Position\s+of|Liability\s+of\s+the\s+Client|CIB\s+Status|Legal\s+Action\s+Status|Audit,\s*Compliance|Security\s*:|Source\s+of\s+Repayment|Sequence\s+of\s+Head\s+Office|Brief\s+Particulars\s+of\s+The\s+Client|Financials\s+of\s+The\s+Client|Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer|Branch\s+Visit\s+Report|Recommendation\s+of\s+(?:the\s+)?(?:Investment\s+Committee|Management\s+Executive\s+Committee|Branch)|Executive\s+Appraisal\s*&\s*Waiver\s+Rationale|Board\s+Memorandum\s+Summary|Proposed\s+Board\s+Resolution|Board\s+Approval\s+Reference|AI\s+Cross-Verified\s+Facility|Operative\s+Terms,\s*Conditions|Branch\s+Recommendation|Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)|Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?|Particulars\s+of\s+(?:the\s+)?(?:Proposed\s+)?Facility|Special\s+Term\(s\))/i.test(
+    /^(?:Nature\s+of\s+Business|Liability\s+Position\s+of|Liability\s+of\s+the\s+Client|CIB\s+Status|Legal\s+Action\s+Status|Audit,\s*Compliance|Security\s*:|Source\s+of\s+Repayment|Sequence\s+of\s+Head\s+Office|Brief\s+Particulars\s+of\s+The\s+Client|Financials\s+of\s+The\s+Client|Contents\s+of\s+(?:the\s+)?Client[’']?s\s+Prayer|Branch\s+Visit\s+Report|Recommendation\s+of\s+(?:the\s+)?(?:Investment\s+Committee|Management\s+Executive\s+Committee|Branch)|AI\s+Cross-Verified\s+Facility|Branch\s+Recommendation|Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)|Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?|Particulars\s+of\s+(?:the\s+)?(?:Proposed\s+)?Facility|Special\s+Term\(s\))/i.test(
       t
     )
   ) {
@@ -1761,14 +1755,8 @@ function applyStructuralPopulations(
         else if (/^Sanction\s*(?:Ref\.?\s*No\.?|Number)$/i.test(label)) trySet(nonEmpty(si.sanctionRefNumber));
         else if (/^Sanction\s*Date$/i.test(label)) trySet(nonEmpty(si.sanctionDate));
         else if (/(?:Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee|Investment\s+Committee\s*(?:\(IC\))?\s+Recommendation)/i.test(label)) trySet(nonEmpty(ss.mecIcRecommendation));
-        else if (/Executive\s+Appraisal/i.test(label)) trySet(nonEmpty(ss.mecExecutiveSummary));
-        else if (/Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i.test(label)) trySet(nonEmpty(ss.mecSamdRecommendation));
         else if (/(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*(?:\(MEC\))?\s+Recommendation)/i.test(label)) trySet(nonEmpty(ss.boardMecRecommendation));
-        else if (/Board\s+Memorandum\s+Summary/i.test(label)) trySet(nonEmpty(ss.boardProposalRationale));
-        else if (/Proposed\s+Board\s+Resolution/i.test(label)) trySet(nonEmpty(ss.boardResolutionTerms));
-        else if (/Board\s+Approval\s+Reference/i.test(label)) trySet(nonEmpty(ss.sanctionBoardAuthority));
         else if (/AI\s+Cross-Verified\s+Facility/i.test(label)) trySet(nonEmpty(ss.sanctionCrossVerifiedSummary));
-        else if (/Operative\s+Terms/i.test(label)) trySet(nonEmpty(ss.sanctionSpecialConditions));
       }
     }
   }
@@ -1845,14 +1833,8 @@ function applyStructuralPopulations(
   if (stageMemo) {
     const ss = stageMemo.stageSections;
     ensureHeadingValue(ss.mecIcRecommendation, /(?:Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee|Investment\s+Committee\s*(?:\(IC\))?\s+Recommendation)/i, true);
-    ensureHeadingValue(ss.mecExecutiveSummary, /Executive\s+Appraisal\s*&\s*Waiver\s+Rationale/i, true);
-    ensureHeadingValue(ss.mecSamdRecommendation, /Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i, true);
     ensureHeadingValue(ss.boardMecRecommendation, /(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*(?:\(MEC\))?\s+Recommendation)/i, true);
-    ensureHeadingValue(ss.boardProposalRationale, /Board\s+Memorandum\s+Summary/i, true);
-    ensureHeadingValue(ss.boardResolutionTerms, /Proposed\s+Board\s+Resolution/i, true);
-    ensureHeadingValue(ss.sanctionBoardAuthority, /Board\s+Approval\s+Reference/i, true);
     ensureHeadingValue(ss.sanctionCrossVerifiedSummary, /AI\s+Cross-Verified\s+Facility/i, true);
-    ensureHeadingValue(ss.sanctionSpecialConditions, /Operative\s+Terms,\s*Conditions/i, true);
   }
 }
 
@@ -2144,18 +2126,6 @@ export async function verifyPopulatedDocxBlob(
         /(?:Recommendation\s+of\s+(?:the\s+)?Investment\s+Committee|Investment\s+Committee\s*(?:\(IC\))?\s+Recommendation)/i,
         ['#mecIcRecommendation#', '{{mecIcRecommendation}}']
       );
-      checkNarrative(
-        'Executive Appraisal & Waiver Rationale for MEC',
-        ss.mecExecutiveSummary,
-        /Executive\s+Appraisal\s*&\s*Waiver\s+Rationale/i,
-        ['#mecExecutiveSummary#', '{{mecExecutiveSummary}}']
-      );
-      checkNarrative(
-        'Observation and Recommendation of SAMD for MEC',
-        ss.mecSamdRecommendation,
-        /Observation\s+and\s+Recommendation\s+of\s+SAMD\s+for\s+MEC/i,
-        ['#mecSamdRecommendation#', '{{mecSamdRecommendation}}']
-      );
     } else if (docType === 'board') {
       checkNarrative(
         'Chronologic Order of the MEC Memo',
@@ -2175,18 +2145,6 @@ export async function verifyPopulatedDocxBlob(
         /(?:Recommendation\s+of\s+(?:the\s+)?Management\s+Executive\s+Committee|Management\s+Executive\s+Committee\s*(?:\(MEC\))?\s+Recommendation)/i,
         ['#boardMecRecommendation#', '{{boardMecRecommendation}}']
       );
-      checkNarrative(
-        'Board Memorandum Summary & Financial Justification',
-        ss.boardProposalRationale,
-        /Board\s+Memorandum\s+Summary/i,
-        ['#boardProposalRationale#', '{{boardProposalRationale}}']
-      );
-      checkNarrative(
-        'Proposed Board Resolution & Approval Terms',
-        ss.boardResolutionTerms,
-        /Proposed\s+Board\s+Resolution/i,
-        ['#boardResolutionTerms#', '{{boardResolutionTerms}}']
-      );
     } else if (docType === 'sanction') {
       checkNarrative(
         'Chronologic Order of the Board Memo',
@@ -2201,22 +2159,10 @@ export async function verifyPopulatedDocxBlob(
         ['#boardMemoDate#', '{{boardMemoDate}}']
       );
       checkNarrative(
-        'Board Approval Reference & Sanction Basis',
-        ss.sanctionBoardAuthority,
-        /Board\s+Approval\s+Reference/i,
-        ['#sanctionBoardAuthority#', '{{sanctionBoardAuthority}}']
-      );
-      checkNarrative(
         'AI Cross-Verified Facility & Liability Confirmation',
         ss.sanctionCrossVerifiedSummary,
         /AI\s+Cross-Verified\s+Facility/i,
         ['#sanctionCrossVerifiedSummary#', '{{sanctionCrossVerifiedSummary}}']
-      );
-      checkNarrative(
-        'Operative Terms, Conditions & Redemption Covenants',
-        ss.sanctionSpecialConditions,
-        /Operative\s+Terms,\s*Conditions/i,
-        ['#sanctionSpecialConditions#', '{{sanctionSpecialConditions}}']
       );
     }
   }

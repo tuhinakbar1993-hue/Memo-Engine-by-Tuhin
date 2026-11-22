@@ -83,7 +83,7 @@ const STAGE_META: Record<
     subtitle: string;
     toLine: string;
     boxLabel: string;
-    sectionHeader: string;
+    sectionHeader?: string;
     signatories: string[];
   }
 > = {
@@ -118,7 +118,6 @@ const STAGE_META: Record<
     subtitle: 'Head Office Sanction Letter & Cross-Verified Operative Covenants',
     toLine: 'Branch Manager / Borrower',
     boxLabel: 'Sanction Letter — Exit with Waiver',
-    sectionHeader: 'Sanction Authority, Cross-Verified Figures & Operative Conditions',
     signatories: [
       'Prepared & Verified By (SAMD)',
       'Checked By (Credit Admin)',
@@ -240,11 +239,6 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
   const buildFallbackDisplay = (key: StageScrutinySectionKey): string => {
     const val = stageMemo.stageSections[key];
     if (val && val.trim() !== '') return val;
-    if (key === 'sanctionBoardAuthority') {
-      const no = stageInputs.boardMemoNumber.trim() || '[Chronologic Order of the Board Memo pending]';
-      const dt = stageInputs.boardMemoDate.trim() || '[Board Memo Date pending]';
-      return `Approved by the Board of Directors vide Board Memo (Chronologic Order: ${no}) dated ${dt}. Pending AI scrutiny or manual entry of the sanction authority basis.`;
-    }
     return '';
   };
 
@@ -1029,10 +1023,12 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
       {/* Interactive Stage AI Sections Card */}
       <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
         <div className="border-b border-slate-100 pb-2">
-          <h3 className="font-display text-sm font-semibold text-slate-900">
-            {meta.sectionHeader}
-          </h3>
-          <p className="text-xs text-slate-500 mt-0.5">
+          {meta.sectionHeader && (
+            <h3 className="font-display text-sm font-semibold text-slate-900">
+              {meta.sectionHeader}
+            </h3>
+          )}
+          <p className={`text-xs text-slate-500 ${meta.sectionHeader ? 'mt-0.5' : ''}`}>
             Each section can be individually scrutinized and populated through Gemini AI, manually edited, or retried, and is automatically synchronized into both the built-in format and any uploaded {meta.title} .docx template.
           </p>
         </div>
@@ -1354,26 +1350,30 @@ export const StageMemoTab: React.FC<StageMemoTabProps> = ({
             )}
 
             {/* Additional Stage Sections Rendered Inside the Official Sheet */}
-            <div className="space-y-2.5 pt-2">
-              {sectionKeys
-                .filter(
-                  (secKey) =>
-                    !(
-                      (docType === 'mec' && secKey === 'mecIcRecommendation') ||
-                      (docType === 'board' && secKey === 'boardMecRecommendation')
-                    )
-                )
-                .map((secKey) => (
-                  <div key={secKey} className="space-y-1">
-                    <p className="font-bold underline text-[10pt]">
-                      {STAGE_SECTION_LABELS[secKey]}:
-                    </p>
-                    <p className="text-[10pt] whitespace-pre-line leading-snug">
-                      {buildFallbackDisplay(secKey) || '—'}
-                    </p>
-                  </div>
-                ))}
-            </div>
+            {(() => {
+              const additionalKeys = sectionKeys.filter(
+                (secKey) =>
+                  !(
+                    (docType === 'mec' && secKey === 'mecIcRecommendation') ||
+                    (docType === 'board' && secKey === 'boardMecRecommendation')
+                  )
+              );
+              if (additionalKeys.length === 0) return null;
+              return (
+                <div className="space-y-2.5 pt-2">
+                  {additionalKeys.map((secKey) => (
+                    <div key={secKey} className="space-y-1">
+                      <p className="font-bold underline text-[10pt]">
+                        {STAGE_SECTION_LABELS[secKey]}:
+                      </p>
+                      <p className="text-[10pt] whitespace-pre-line leading-snug">
+                        {buildFallbackDisplay(secKey) || '—'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {/* Closing Placement Box & Signatories */}
             <div className="pt-4 space-y-6">

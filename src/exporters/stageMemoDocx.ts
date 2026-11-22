@@ -208,16 +208,6 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
     );
 
     body.push(
-      ...renderNarrativeParagraphs(
-        'Executive Appraisal & Waiver Rationale for MEC:',
-        stageSections.mecExecutiveSummary,
-        { before: 45 }
-      ),
-      ...renderNarrativeParagraphs(
-        'Observation and Recommendation of SAMD for MEC:',
-        stageSections.mecSamdRecommendation,
-        { before: 40 }
-      ),
       ...buildSignatoriesAndPlacement(
         'The proposal is hereby placed before the Management Executive Committee (MEC) for kind recommendation/approval.',
         'Submitted before the Management Executive Committee (MEC) for kind decision.'
@@ -258,16 +248,6 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
     );
 
     body.push(
-      ...renderNarrativeParagraphs(
-        'Board Memorandum Summary & Financial Justification:',
-        stageSections.boardProposalRationale,
-        { before: 45 }
-      ),
-      ...renderNarrativeParagraphs(
-        'Proposed Board Resolution & Approval Terms:',
-        stageSections.boardResolutionTerms,
-        { before: 40 }
-      ),
       ...buildSignatoriesAndPlacement(
         'Submitted before the Honourable Board of Directors for kind consideration and approval.',
         'Submitted for kind approval of the Board of Directors.'
@@ -314,26 +294,11 @@ export async function generateStageMemoDocxBlob(stageMemo: ResolvedStageMemo): P
       );
     }
 
-    const defaultBoardAuth =
-      stageInputs.boardMemoNumber || stageInputs.boardMemoDate
-        ? `Pursuant to the approval accorded by the Board of Directors vide Board Memo (Chronologic Order: ${stageInputs.boardMemoNumber || '[Chronologic Order of the Board Memo]'}) dated ${stageInputs.boardMemoDate || '[Board Memo Date]'} (MEC Chronologic Order: ${stageInputs.mecMemoNumber || '-'} dated ${stageInputs.mecMemoDate || '-'}; IC Chronologic Order: ${stageInputs.icMemoNumber || '-'} dated ${stageInputs.icMemoDate || '-'}), Head Office is pleased to convey sanction of the Exit with Waiver settlement proposal.`
-        : '';
-
     body.push(
-      ...renderNarrativeParagraphs(
-        'Board Approval Reference & Sanction Basis:',
-        stageSections.sanctionBoardAuthority,
-        { before: 55, fallback: defaultBoardAuth }
-      ),
       ...renderNarrativeParagraphs(
         'AI Cross-Verified Facility & Liability Confirmation:',
         stageSections.sanctionCrossVerifiedSummary,
-        { before: 40 }
-      ),
-      ...renderNarrativeParagraphs(
-        'Operative Terms, Conditions & Redemption Covenants:',
-        stageSections.sanctionSpecialConditions,
-        { before: 40 }
+        { before: 55 }
       ),
       ...buildSignatoriesAndPlacement(
         'Issued under Head Office Sanction Authority. Strict compliance with all stipulated terms and BRPD circulars is mandatory.',

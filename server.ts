@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import { createHash } from 'crypto';
 import express from 'express';
 import http from 'http';
@@ -6,17 +6,35 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel, Type, type Schema } from '@google/genai';
 
+dotenv.config();
+dotenv.config({ path: '.env.local', override: false });
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
 
-function getAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured in environment variables.');
+const MISSING_API_KEY_MESSAGE =
+  'GEMINI_API_KEY is not configured. Please add or select a Gemini API key in Settings > Secrets and retry.';
+
+class MissingApiKeyError extends Error {
+  constructor(message = MISSING_API_KEY_MESSAGE) {
+    super(message);
+    this.name = 'MissingApiKeyError';
   }
-  return new GoogleGenAI({
+}
+
+let cachedAiClient: { apiKey: string; client: GoogleGenAI } | null = null;
+
+function getAiClient(): GoogleGenAI {
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || '').trim();
+  if (!apiKey) {
+    throw new MissingApiKeyError();
+  }
+  if (cachedAiClient && cachedAiClient.apiKey === apiKey) {
+    return cachedAiClient.client;
+  }
+  const client = new GoogleGenAI({
     apiKey,
     httpOptions: {
       headers: {
@@ -24,6 +42,23 @@ function getAiClient(): GoogleGenAI {
       },
     },
   });
+  cachedAiClient = { apiKey, client };
+  return client;
+}
+
+function resolveAiClient(): { ok: true; ai: GoogleGenAI } | { ok: false; status: number; error: string } {
+  try {
+    return { ok: true, ai: getAiClient() };
+  } catch (error) {
+    if (error instanceof MissingApiKeyError) {
+      return { ok: false, status: 503, error: error.message };
+    }
+    return {
+      ok: false,
+      status: 500,
+      error: error instanceof Error ? error.message : 'Failed to initialize Gemini AI client.',
+    };
+  }
 }
 
 type ScrutinySectionKey =
@@ -737,27 +772,33 @@ function resolveBranchProposalSource(
   };
 }
 
+const SYNTHESIS_CONTEXT_SECTIONS = new Set<ScrutinySectionKey>([
+  'justification',
+  'sec8SourceOfRepayment',
+  'clientPrayer',
+  'sec13BranchRecommendation',
+]);
+
 function buildCompactSectionContext(
   section: ScrutinySectionKey,
   context?: Record<string, unknown>
 ): string {
   if (!context) return '{}';
 
-  // Sections that only extract directly from Branch Proposal don't need redundant branchProposal JSON or all narrative drafts
-  if (
-    section === 'justification' ||
-    section === 'sec2LiabilityOurBank' ||
-    section === 'samdObservation'
-  ) {
+  if (section === 'samdObservation') {
     const { branchProposal: _omitBp, ...rest } = context;
     return JSON.stringify(rest);
   }
 
-  // Extraction sections get verified numeric placeholders + summaries without bloated narrative text or redundant branchProposal dump
-  return JSON.stringify({
-    placeholders: context.placeholders ?? {},
-    extractedSummaries: context.extractedSummaries ?? {},
-  });
+  if (SYNTHESIS_CONTEXT_SECTIONS.has(section)) {
+    return JSON.stringify({
+      placeholders: context.placeholders ?? {},
+      extractedSummaries: context.extractedSummaries ?? {},
+    });
+  }
+
+  // Pure Branch Proposal extraction sections read directly from the uploaded Branch Proposal
+  return '{}';
 }
 
 function sanitizeAiMemoText(raw: string): string {
@@ -871,6 +912,9 @@ function isModelNotFoundError(msg: string): boolean {
 }
 
 function formatGeminiError(err: unknown, fallback = 'Failed to scrutinize section.'): string {
+  if (err instanceof MissingApiKeyError) {
+    return err.message;
+  }
   const raw = err instanceof Error ? err.message : String(err ?? '');
   if (!raw) return fallback;
   try {
@@ -883,12 +927,22 @@ function formatGeminiError(err: unknown, fallback = 'Failed to scrutinize sectio
           ? 'Gemini API daily request quota reached across available free-tier models — click Retry once quota resets or select a billing-enabled API key in Settings > Secrets.'
           : 'Gemini API rate limit reached — click Retry in a moment to generate this section.';
       }
+      if (
+        code === 403 ||
+        status === 'PERMISSION_DENIED' ||
+        /API_KEY_INVALID|API key not valid/i.test(parsed.error.message ?? raw)
+      ) {
+        return 'Gemini API key is invalid or lacks permission. Please verify or select a valid API key in Settings > Secrets.';
+      }
       if (parsed.error.message) {
         return parsed.error.message.split('\n')[0];
       }
     }
   } catch {
     // Plain text error message
+  }
+  if (/API_KEY_INVALID|API key not valid|PERMISSION_DENIED/i.test(raw)) {
+    return 'Gemini API key is invalid or lacks permission. Please verify or select a valid API key in Settings > Secrets.';
   }
   if (isQuotaOrRateError(raw)) {
     return isDailyQuotaError(raw)
@@ -911,52 +965,92 @@ function buildModelConfig(
   return baseConfig;
 }
 
+function stripJsonFences(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('```')) return trimmed;
+  return trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  let index = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (index < items.length) {
+      const current = items[index++];
+      await worker(current);
+    }
+  });
+  await Promise.all(runners);
+}
+
 async function executeWithModelFallback<T>(
   runner: (model: SupportedScrutinyModel) => Promise<T>,
   shouldStop?: () => boolean
 ): Promise<T> {
-  const now = Date.now();
-  const active = FREE_TIER_MODELS.filter((m) => (modelCooldownUntil.get(m) ?? 0) <= now);
-  const candidates: SupportedScrutinyModel[] =
-    active.length > 0 ? active : [...FREE_TIER_MODELS];
-
+  const maxPasses = 4;
   let lastErr: unknown;
-  for (let idx = 0; idx < candidates.length; idx++) {
-    if (shouldStop?.()) {
-      throw new Error('Request cancelled.');
-    }
-    const model = candidates[idx];
-    try {
-      const result = await runner(model);
-      modelCooldownUntil.delete(model);
-      return result;
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
 
-      if (isDailyQuotaError(msg) || isModelNotFoundError(msg)) {
-        modelCooldownUntil.set(model, Date.now() + 10 * 60_000);
-        continue;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const now = Date.now();
+    const active = FREE_TIER_MODELS.filter((m) => (modelCooldownUntil.get(m) ?? 0) <= now);
+    const candidates: SupportedScrutinyModel[] =
+      active.length > 0 ? active : [...FREE_TIER_MODELS];
+
+    let sawTransientRateBurst = false;
+
+    for (let idx = 0; idx < candidates.length; idx++) {
+      if (shouldStop?.()) {
+        throw new Error('Request cancelled.');
       }
+      const model = candidates[idx];
+      try {
+        const result = await runner(model);
+        modelCooldownUntil.delete(model);
+        return result;
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
 
-      if (isQuotaOrRateError(msg)) {
-        modelCooldownUntil.set(model, Date.now() + 20_000);
-        continue;
-      }
-
-      const isTransientNet = /\b(500|502|503|504)\b|timeout|network|econnreset/i.test(msg);
-      if (isTransientNet && !shouldStop?.()) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        try {
-          return await runner(model);
-        } catch (retryErr) {
-          lastErr = retryErr;
+        if (isDailyQuotaError(msg) || isModelNotFoundError(msg)) {
+          modelCooldownUntil.set(model, Date.now() + 10 * 60_000);
           continue;
         }
-      }
 
-      throw err;
+        if (isQuotaOrRateError(msg)) {
+          sawTransientRateBurst = true;
+          modelCooldownUntil.set(model, Date.now() + 1_500);
+          continue;
+        }
+
+        const isTransientNet = /\b(500|502|503|504)\b|timeout|network|econnreset/i.test(msg);
+        if (isTransientNet && !shouldStop?.()) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          try {
+            return await runner(model);
+          } catch (retryErr) {
+            lastErr = retryErr;
+            continue;
+          }
+        }
+
+        throw err;
+      }
     }
+
+    if (sawTransientRateBurst && pass < maxPasses - 1 && !shouldStop?.()) {
+      const baseDelay = 500 + pass * 550;
+      const jitterMs = baseDelay + Math.floor(Math.random() * 300);
+      await new Promise((resolve) => setTimeout(resolve, jitterMs));
+      continue;
+    }
+    break;
   }
 
   throw lastErr;
@@ -1053,8 +1147,8 @@ ${compactContext}`,
     shouldStop
   );
 
-  const rawJson = (response.text ?? '{}').trim();
-  const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+  const rawJson = stripJsonFences(response.text ?? '{}');
+  const parsed = JSON.parse(rawJson || '{}') as Record<string, unknown>;
   const evaluated = evaluateSectionResult(section, parsed);
   storeSectionCache(cacheKey, evaluated);
   return evaluated;
@@ -1197,6 +1291,7 @@ ${promptBlocks.join('\n\n')}`;
       type: Type.OBJECT,
       properties,
       required: sections,
+      propertyOrdering: sections,
     },
   };
 }
@@ -1246,9 +1341,14 @@ async function startServer() {
         return;
       }
 
-      const ai = getAiClient();
+      const aiClient = resolveAiClient();
+      if (!aiClient.ok) {
+        res.status(aiClient.status).json({ error: aiClient.error });
+        return;
+      }
+
       const { result, insufficient, insufficientReason } = await scrutinizeSingleSection(
-        ai,
+        aiClient.ai,
         section,
         resolved.source,
         context,
@@ -1257,9 +1357,12 @@ async function startServer() {
       );
       res.json({ result, insufficient, insufficientReason, sourceId: resolved.source.sourceId });
     } catch (error) {
-      console.error('Error scrutinizing IC Memo section:', error);
+      if (!(error instanceof MissingApiKeyError)) {
+        console.error('Error scrutinizing IC Memo section:', error);
+      }
+      const status = error instanceof MissingApiKeyError ? 503 : 500;
       const message = formatGeminiError(error, 'Failed to scrutinize section.');
-      res.status(500).json({ error: message });
+      res.status(status).json({ error: message });
     }
   });
 
@@ -1292,7 +1395,12 @@ async function startServer() {
         return;
       }
 
-      const ai = getAiClient();
+      const aiClient = resolveAiClient();
+      if (!aiClient.ok) {
+        res.status(aiClient.status).json({ error: aiClient.error });
+        return;
+      }
+      const ai = aiClient.ai;
 
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1363,39 +1471,65 @@ async function startServer() {
         }
       }
 
-      // Step 2: Scrutinize uncached independent sections in 1 consolidated streaming request
-      if (uncachedQueue.length === 1 && !clientClosed) {
-        const sec = uncachedQueue[0];
-        try {
-          const evaluated = await scrutinizeSingleSection(
-            ai,
-            sec,
-            resolved.source,
-            context,
-            () => clientClosed
-          );
-          emitEvaluatedSection(sec, evaluated);
-        } catch (err) {
-          if (!clientClosed) {
-            writeEvent({
-              type: 'error',
-              section: sec,
-              error: formatGeminiError(err, 'Failed to scrutinize section.'),
-            });
+      // Step 2: Partition uncached sections into 4 balanced streaming groups (+ concurrent SAMD)
+      // Halves multimodal image upload pressure & prevents RPM/TPM burst 429s while streaming every section live.
+      const PARALLEL_GROUPS: ScrutinySectionKey[][] = [
+        ['justification', 'sec1NatureOfBusiness', 'clientPrayer', 'sec8SourceOfRepayment'],
+        ['branchVisit', 'sec13BranchRecommendation', 'sec14IccdRecommendation'],
+        ['sec2LiabilityOurBank', 'sec3LiabilityOtherUnits', 'sec4CibStatus', 'sec5LegalAction', 'sec6AuditCompliance'],
+        ['sec7Security', 'sec9HoSanctions', 'sec10ClientParticulars', 'sec11Financials'],
+      ];
+
+      const assigned = new Set<ScrutinySectionKey>(PARALLEL_GROUPS.flat());
+      const activeGroups = PARALLEL_GROUPS.map((g) =>
+        g.filter((sec) => uncachedQueue.includes(sec))
+      ).filter((g) => g.length > 0);
+      const extraSections = uncachedQueue.filter((sec) => !assigned.has(sec));
+      if (extraSections.length > 0) {
+        activeGroups.push(extraSections);
+      }
+
+      const batchContext = JSON.stringify({
+        placeholders: context?.placeholders ?? {},
+        extractedSummaries: context?.extractedSummaries ?? {},
+      });
+
+      const runStreamingGroup = async (groupSections: ScrutinySectionKey[]): Promise<void> => {
+        if (groupSections.length === 0 || clientClosed) return;
+
+        if (groupSections.length === 1) {
+          const sec = groupSections[0];
+          try {
+            const evaluated = await scrutinizeSingleSection(
+              ai,
+              sec,
+              resolved.source,
+              context,
+              () => clientClosed
+            );
+            emitEvaluatedSection(sec, evaluated);
+          } catch (err) {
+            if (!clientClosed) {
+              writeEvent({
+                type: 'error',
+                section: sec,
+                error: formatGeminiError(err, 'Failed to scrutinize section.'),
+              });
+            }
           }
+          return;
         }
-      } else if (uncachedQueue.length > 1 && !clientClosed) {
+
         const emittedKeys = new Set<string>();
         let batchErrorMessage: string | null = null;
         let hitHardQuota = false;
+        const needsMemoContext = groupSections.some((s) => SYNTHESIS_CONTEXT_SECTIONS.has(s));
 
         try {
-          const { prompt, schema } = buildConsolidatedBatchSpec(uncachedQueue);
-          const batchContext = JSON.stringify({
-            placeholders: context?.placeholders ?? {},
-            extractedSummaries: context?.extractedSummaries ?? {},
-          });
-
+          const { prompt, schema } = buildConsolidatedBatchSpec(groupSections);
+          const contextSuffix = needsMemoContext
+            ? `\n\nAdditional Verified IC Memo Context (from other uploaded documents & manual inputs):\n${batchContext}`
+            : '';
           const parts: Array<
             | { inlineData: { mimeType: string; data: string } }
             | { text: string }
@@ -1407,10 +1541,7 @@ async function startServer() {
 Uploaded Branch Proposal File: ${resolved.source.fileName}
 
 Extracted Branch Proposal Text (may contain minor scanner OCR noise — cross-verify against attached page images when present):
-${resolved.source.rawText}
-
-Additional Verified IC Memo Context (from other uploaded documents & manual inputs):
-${batchContext}`,
+${resolved.source.rawText}${contextSuffix}`,
             },
           ];
 
@@ -1435,7 +1566,7 @@ ${batchContext}`,
               const completed = extractCompletedTopLevelObjects(acc, emittedKeys);
               for (const item of completed) {
                 const sec = item.key as ScrutinySectionKey;
-                if (!uncachedQueue.includes(sec)) continue;
+                if (!groupSections.includes(sec)) continue;
                 const evaluated = evaluateSectionResult(sec, item.value);
                 const cacheKey = getSectionCacheKey(
                   resolved.source.sourceId,
@@ -1450,12 +1581,26 @@ ${batchContext}`,
           }, () => clientClosed);
 
           if (!clientClosed && fullBuffer.trim()) {
+            const cleanedBuffer = stripJsonFences(fullBuffer);
+            const salvaged = extractCompletedTopLevelObjects(cleanedBuffer, emittedKeys);
+            for (const item of salvaged) {
+              const sec = item.key as ScrutinySectionKey;
+              if (!groupSections.includes(sec)) continue;
+              const evaluated = evaluateSectionResult(sec, item.value);
+              const cacheKey = getSectionCacheKey(
+                resolved.source.sourceId,
+                sec,
+                buildCompactSectionContext(sec, context)
+              );
+              storeSectionCache(cacheKey, evaluated);
+              emitEvaluatedSection(sec, evaluated);
+            }
             try {
-              const finalParsed = JSON.parse(fullBuffer) as Record<
+              const finalParsed = JSON.parse(cleanedBuffer) as Record<
                 string,
                 Record<string, unknown>
               >;
-              for (const sec of uncachedQueue) {
+              for (const sec of groupSections) {
                 if (emittedKeys.has(sec)) continue;
                 const rawObj = finalParsed[sec];
                 if (rawObj && typeof rawObj === 'object') {
@@ -1476,11 +1621,11 @@ ${batchContext}`,
           }
         } catch (err) {
           const rawMsg = err instanceof Error ? err.message : String(err);
-          hitHardQuota = isQuotaOrRateError(rawMsg);
+          hitHardQuota = isQuotaOrRateError(rawMsg) && isDailyQuotaError(rawMsg);
           batchErrorMessage = formatGeminiError(err, 'Failed to scrutinize section.');
         }
 
-        const remaining = uncachedQueue.filter((sec) => !emittedKeys.has(sec));
+        const remaining = groupSections.filter((sec) => !emittedKeys.has(sec));
         if (remaining.length > 0 && !clientClosed) {
           if (hitHardQuota && batchErrorMessage) {
             for (const sec of remaining) {
@@ -1491,8 +1636,8 @@ ${batchContext}`,
               });
             }
           } else {
-            for (const sec of remaining) {
-              if (clientClosed) break;
+            await runWithConcurrency(remaining, 2, async (sec) => {
+              if (clientClosed) return;
               try {
                 const evaluated = await scrutinizeSingleSection(
                   ai,
@@ -1514,13 +1659,13 @@ ${batchContext}`,
                   });
                 }
               }
-            }
+            });
           }
         }
-      }
+      };
 
-      // Step 3: SAMD Observation synthesis (uses freshly populated sections in samdContext)
-      if (includesSamd && !clientClosed) {
+      const runSamdObservation = async (): Promise<void> => {
+        if (!includesSamd || clientClosed) return;
         const samdCompactCtx = buildCompactSectionContext('samdObservation', samdContext);
         const samdCacheKey = getSectionCacheKey(
           resolved.source.sourceId,
@@ -1530,37 +1675,45 @@ ${batchContext}`,
         const cachedSamd = sectionResultCache.get(samdCacheKey);
         if (cachedSamd) {
           emitEvaluatedSection('samdObservation', cachedSamd);
-        } else {
-          try {
-            const evaluated = await scrutinizeSingleSection(
-              ai,
-              'samdObservation',
-              resolved.source,
-              samdContext,
-              () => clientClosed
-            );
-            emitEvaluatedSection('samdObservation', evaluated);
-          } catch (err) {
-            if (!clientClosed) {
-              writeEvent({
-                type: 'error',
-                section: 'samdObservation',
-                error: formatGeminiError(err, 'Failed to scrutinize SAMD section.'),
-              });
-            }
+          return;
+        }
+        try {
+          const evaluated = await scrutinizeSingleSection(
+            ai,
+            'samdObservation',
+            resolved.source,
+            samdContext,
+            () => clientClosed
+          );
+          emitEvaluatedSection('samdObservation', evaluated);
+        } catch (err) {
+          if (!clientClosed) {
+            writeEvent({
+              type: 'error',
+              section: 'samdObservation',
+              error: formatGeminiError(err, 'Failed to scrutinize SAMD section.'),
+            });
           }
         }
-      }
+      };
+
+      await Promise.all([
+        ...activeGroups.map((group) => runStreamingGroup(group)),
+        runSamdObservation(),
+      ]);
 
       if (!clientClosed) {
         writeEvent({ type: 'done', sourceId: resolved.source.sourceId });
         res.end();
       }
     } catch (error) {
-      console.error('Error during batch scrutiny:', error);
+      if (!(error instanceof MissingApiKeyError)) {
+        console.error('Error during batch scrutiny:', error);
+      }
+      const status = error instanceof MissingApiKeyError ? 503 : 500;
       const message = formatGeminiError(error, 'Batch scrutiny failed.');
       if (!res.headersSent) {
-        res.status(500).json({ error: message });
+        res.status(status).json({ error: message });
       } else if (!res.writableEnded) {
         res.write(
           `data: ${JSON.stringify({
@@ -1689,15 +1842,29 @@ Write crisp numbered operative covenants ("i. ...", "ii. ...", etc.) covering ad
     return null;
   }
 
+  function buildCompactStageContext(context?: Record<string, unknown>): string {
+    if (!context) return '{}';
+    const { branchProposal: _omitTopBp, icMemoFinalized, ...rest } = context;
+    if (icMemoFinalized && typeof icMemoFinalized === 'object') {
+      const { branchProposal: _omitNestedBp, ...finalizedClean } = icMemoFinalized as Record<
+        string,
+        unknown
+      >;
+      return JSON.stringify({ ...rest, icMemoFinalized: finalizedClean });
+    }
+    return JSON.stringify(rest);
+  }
+
   async function scrutinizeSingleStageSection(
     ai: GoogleGenAI,
     section: StageScrutinySectionKey,
     source: CachedBranchProposalSource | null,
     context?: Record<string, unknown>,
-    shouldStop?: () => boolean
+    shouldStop?: () => boolean,
+    precomputedContextStr?: string
   ): Promise<{ result: Record<string, unknown>; insufficient: boolean; insufficientReason: string }> {
     const { prompt, schema } = getStageSectionConfig(section, context);
-    const contextStr = JSON.stringify(context ?? {});
+    const contextStr = precomputedContextStr ?? buildCompactStageContext(context);
     const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${section}::${hashString(contextStr)}`;
     const cached = sectionResultCache.get(cacheKey);
     if (cached) return cached;
@@ -1708,10 +1875,18 @@ ${source ? `Uploaded Branch Proposal File: ${source.fileName}\nExtracted Text:\n
 Chained Memo & Verified Document Context (IC Memo -> MEC Memo -> Board Memo -> Sanction + Stage Inputs):
 ${contextStr}`;
 
+    const icAi = (context?.icMemoAiSections ?? {}) as Record<string, unknown>;
+    const hasPopulatedIc = Boolean(icAi.justification || icAi.samdObservation);
+    const shouldAttachImages =
+      Boolean(source) &&
+      (section === 'sanctionCrossVerifiedSummary' || !hasPopulatedIc || (source?.rawText?.trim().length ?? 0) < 500);
+
     const parts: Array<
       | { inlineData: { mimeType: string; data: string } }
       | { text: string }
-    > = source ? [...source.imageParts, { text: textPayload }] : [{ text: textPayload }];
+    > = shouldAttachImages && source
+      ? [...source.imageParts, { text: textPayload }]
+      : [{ text: textPayload }];
 
     const response = await executeWithModelFallback(
       (model) =>
@@ -1727,7 +1902,7 @@ ${contextStr}`;
       shouldStop
     );
 
-    const parsed = JSON.parse((response.text ?? '{}').trim()) as Record<string, unknown>;
+    const parsed = JSON.parse(stripJsonFences(response.text ?? '{}') || '{}') as Record<string, unknown>;
     const rawText = String(parsed.text ?? '').trim();
     const cleanText = sanitizeAiMemoText(rawText);
     const modelReason = String(parsed.insufficientReason ?? '').trim();
@@ -1740,6 +1915,33 @@ ${contextStr}`;
     };
     storeSectionCache(cacheKey, evaluated);
     return evaluated;
+  }
+
+  function buildConsolidatedStageBatchSpec(
+    sections: StageScrutinySectionKey[],
+    context?: Record<string, unknown>
+  ): { prompt: string; schema: Schema } {
+    const properties: Record<string, Schema> = {};
+    const promptBlocks: string[] = [];
+    for (const sec of sections) {
+      const cfg = getStageSectionConfig(sec, context);
+      properties[sec] = cfg.schema;
+      promptBlocks.push(`### STAGE SECTION KEY "${sec}":\n${cfg.prompt}`);
+    }
+    const prompt = `Scrutinize the finalized IC Memo, chained memo context, and Branch Proposal once and populate ALL ${sections.length} requested stage sections below in a single structured JSON object.
+Follow EVERY section's exact instructions and integrity rules cleanly (no AI notes or markdown asterisks).
+
+${promptBlocks.join('\n\n')}`;
+
+    return {
+      prompt,
+      schema: {
+        type: Type.OBJECT,
+        properties,
+        required: sections,
+        propertyOrdering: sections,
+      },
+    };
   }
 
   app.post('/api/gemini/scrutinize-stage-section', async (req, res) => {
@@ -1758,8 +1960,12 @@ ${contextStr}`;
       }
 
       const source = resolveOptionalStageSource(sourceId, branchProposalSource);
-      const ai = getAiClient();
-      const evaluated = await scrutinizeSingleStageSection(ai, section, source, context);
+      const aiClient = resolveAiClient();
+      if (!aiClient.ok) {
+        res.status(aiClient.status).json({ error: aiClient.error });
+        return;
+      }
+      const evaluated = await scrutinizeSingleStageSection(aiClient.ai, section, source, context);
       res.json({
         result: evaluated.result,
         insufficient: evaluated.insufficient,
@@ -1767,8 +1973,11 @@ ${contextStr}`;
         sourceId: source?.sourceId,
       });
     } catch (error) {
-      console.error('Error scrutinizing stage memo section:', error);
-      res.status(500).json({ error: formatGeminiError(error, 'Failed to generate stage section.') });
+      if (!(error instanceof MissingApiKeyError)) {
+        console.error('Error scrutinizing stage memo section:', error);
+      }
+      const status = error instanceof MissingApiKeyError ? 503 : 500;
+      res.status(status).json({ error: formatGeminiError(error, 'Failed to generate stage section.') });
     }
   });
 
@@ -1798,7 +2007,12 @@ ${contextStr}`;
       }
 
       const source = resolveOptionalStageSource(sourceId, branchProposalSource);
-      const ai = getAiClient();
+      const aiClient = resolveAiClient();
+      if (!aiClient.ok) {
+        res.status(aiClient.status).json({ error: aiClient.error });
+        return;
+      }
+      const ai = aiClient.ai;
 
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1816,7 +2030,7 @@ ${contextStr}`;
         res.write(`data: ${JSON.stringify(payload)}\n\n`);
       };
 
-      const contextStr = JSON.stringify(context ?? {});
+      const contextStr = buildCompactStageContext(context);
       const uncached: StageScrutinySectionKey[] = [];
       for (const sec of targetSections) {
         const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${sec}::${hashString(contextStr)}`;
@@ -1837,7 +2051,14 @@ ${contextStr}`;
       if (uncached.length === 1 && !clientClosed) {
         const sec = uncached[0];
         try {
-          const ev = await scrutinizeSingleStageSection(ai, sec, source, context, () => clientClosed);
+          const ev = await scrutinizeSingleStageSection(
+            ai,
+            sec,
+            source,
+            context,
+            () => clientClosed,
+            contextStr
+          );
           writeEvent({
             type: 'section',
             section: sec,
@@ -1855,23 +2076,56 @@ ${contextStr}`;
           }
         }
       } else if (uncached.length > 1 && !clientClosed) {
-        const properties: Record<string, Schema> = {};
-        const promptBlocks: string[] = [];
-        for (const sec of uncached) {
-          const cfg = getStageSectionConfig(sec, context);
-          properties[sec] = cfg.schema;
-          promptBlocks.push(`### STAGE SECTION KEY "${sec}":\n${cfg.prompt}`);
-        }
-        const batchPrompt = `Generate ALL ${uncached.length} requested ${docType.toUpperCase()} document sections in one clean JSON object. Follow every integrity and formatting rule.\n\n${promptBlocks.join('\n\n')}`;
-        const textPayload = `${batchPrompt}\n\n${source ? `Uploaded Branch Proposal File: ${source.fileName}\nExtracted Text:\n${source.rawText}\n` : ''}\nChained Memo & Verified Document Context:\n${contextStr}`;
-        const parts: Array<
-          | { inlineData: { mimeType: string; data: string } }
-          | { text: string }
-        > = source ? [...source.imageParts, { text: textPayload }] : [{ text: textPayload }];
+        const emittedStageKeys = new Set<string>();
+        let stageBatchError: string | null = null;
+        let hitHardQuota = false;
 
-        const emittedKeys = new Set<string>();
-        let batchErr: string | null = null;
+        const evaluateAndEmitStage = (sec: StageScrutinySectionKey, rawObj: Record<string, unknown>) => {
+          const rawText = String(rawObj.text ?? '').trim();
+          const cleanText = sanitizeAiMemoText(rawText);
+          const modelReason = String(rawObj.insufficientReason ?? '').trim();
+          const insufficient = Boolean(modelReason) || cleanText === '';
+          const evaluated = {
+            result: { text: cleanText, insufficientReason: modelReason },
+            insufficient,
+            insufficientReason:
+              modelReason ||
+              (!cleanText ? 'Required chained memo context or source data is unavailable.' : ''),
+          };
+          const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${sec}::${hashString(contextStr)}`;
+          storeSectionCache(cacheKey, evaluated);
+          writeEvent({
+            type: 'section',
+            section: sec,
+            result: evaluated.result,
+            insufficient: evaluated.insufficient,
+            insufficientReason: evaluated.insufficientReason,
+          });
+        };
+
         try {
+          const { prompt, schema } = buildConsolidatedStageBatchSpec(uncached, context);
+          const textPayload = `${prompt}
+
+${source ? `Uploaded Branch Proposal File: ${source.fileName}\nExtracted Text:\n${source.rawText}\n` : ''}
+Chained Memo & Verified Document Context (IC Memo -> MEC Memo -> Board Memo -> Sanction + Stage Inputs):
+${contextStr}`;
+
+          const icAi = (context?.icMemoAiSections ?? {}) as Record<string, unknown>;
+          const hasPopulatedIc = Boolean(icAi.justification || icAi.samdObservation);
+          const shouldAttachImages =
+            Boolean(source) &&
+            (uncached.includes('sanctionCrossVerifiedSummary') ||
+              !hasPopulatedIc ||
+              (source?.rawText?.trim().length ?? 0) < 500);
+
+          const parts: Array<
+            | { inlineData: { mimeType: string; data: string } }
+            | { text: string }
+          > = shouldAttachImages && source
+            ? [...source.imageParts, { text: textPayload }]
+            : [{ text: textPayload }];
+
           const fullBuffer = await executeWithModelFallback(async (model) => {
             const stream = await ai.models.generateContentStream({
               model,
@@ -1879,32 +2133,73 @@ ${contextStr}`;
               config: buildModelConfig(model, {
                 systemInstruction: SCRUTINY_SYSTEM_INSTRUCTION,
                 responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties,
-                  required: uncached,
-                },
+                responseSchema: schema,
               }),
             });
+
             let acc = '';
             for await (const chunk of stream) {
               if (clientClosed) break;
               const delta = chunk.text ?? '';
               if (!delta) continue;
               acc += delta;
-              const completed = extractCompletedTopLevelObjects(acc, emittedKeys);
+
+              const completed = extractCompletedTopLevelObjects(acc, emittedStageKeys);
               for (const item of completed) {
                 const sec = item.key as StageScrutinySectionKey;
                 if (!uncached.includes(sec)) continue;
-                const cleanText = sanitizeAiMemoText(String(item.value.text ?? '').trim());
-                const reason = String(item.value.insufficientReason ?? '').trim();
-                const ev = {
-                  result: { text: cleanText, insufficientReason: reason },
-                  insufficient: Boolean(reason) || cleanText === '',
-                  insufficientReason: reason,
-                };
-                const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${sec}::${hashString(contextStr)}`;
-                storeSectionCache(cacheKey, ev);
+                evaluateAndEmitStage(sec, item.value);
+              }
+            }
+            return acc;
+          }, () => clientClosed);
+
+          if (!clientClosed && fullBuffer.trim()) {
+            const cleanedBuffer = stripJsonFences(fullBuffer);
+            const salvaged = extractCompletedTopLevelObjects(cleanedBuffer, emittedStageKeys);
+            for (const item of salvaged) {
+              const sec = item.key as StageScrutinySectionKey;
+              if (!uncached.includes(sec)) continue;
+              evaluateAndEmitStage(sec, item.value);
+            }
+            try {
+              const finalParsed = JSON.parse(cleanedBuffer) as Record<string, Record<string, unknown>>;
+              for (const sec of uncached) {
+                if (emittedStageKeys.has(sec)) continue;
+                const rawObj = finalParsed[sec];
+                if (rawObj && typeof rawObj === 'object') {
+                  emittedStageKeys.add(sec);
+                  evaluateAndEmitStage(sec, rawObj);
+                }
+              }
+            } catch {
+              // Remaining unemitted sections handled below
+            }
+          }
+        } catch (err) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          hitHardQuota = isQuotaOrRateError(rawMsg) && isDailyQuotaError(rawMsg);
+          stageBatchError = formatGeminiError(err, 'Failed to generate stage section.');
+        }
+
+        const remainingStage = uncached.filter((sec) => !emittedStageKeys.has(sec));
+        if (remainingStage.length > 0 && !clientClosed) {
+          if (hitHardQuota && stageBatchError) {
+            for (const sec of remainingStage) {
+              writeEvent({ type: 'error', section: sec, error: stageBatchError });
+            }
+          } else {
+            await runWithConcurrency(remainingStage, 2, async (sec) => {
+              if (clientClosed) return;
+              try {
+                const ev = await scrutinizeSingleStageSection(
+                  ai,
+                  sec,
+                  source,
+                  context,
+                  () => clientClosed,
+                  contextStr
+                );
                 writeEvent({
                   type: 'section',
                   section: sec,
@@ -1912,53 +2207,20 @@ ${contextStr}`;
                   insufficient: ev.insufficient,
                   insufficientReason: ev.insufficientReason,
                 });
-              }
-            }
-            return acc;
-          }, () => clientClosed);
-
-          if (!clientClosed && fullBuffer.trim()) {
-            try {
-              const finalParsed = JSON.parse(fullBuffer) as Record<string, Record<string, unknown>>;
-              for (const sec of uncached) {
-                if (emittedKeys.has(sec)) continue;
-                const obj = finalParsed[sec];
-                if (obj && typeof obj === 'object') {
-                  emittedKeys.add(sec);
-                  const cleanText = sanitizeAiMemoText(String(obj.text ?? '').trim());
-                  const reason = String(obj.insufficientReason ?? '').trim();
-                  const ev = {
-                    result: { text: cleanText, insufficientReason: reason },
-                    insufficient: Boolean(reason) || cleanText === '',
-                    insufficientReason: reason,
-                  };
-                  const cacheKey = `${source?.sourceId ?? 'ctx_only'}::STAGE::${sec}::${hashString(contextStr)}`;
-                  storeSectionCache(cacheKey, ev);
+              } catch (secErr) {
+                if (!clientClosed) {
                   writeEvent({
-                    type: 'section',
+                    type: 'error',
                     section: sec,
-                    result: ev.result,
-                    insufficient: ev.insufficient,
-                    insufficientReason: ev.insufficientReason,
+                    error: formatGeminiError(
+                      secErr,
+                      stageBatchError || 'Failed to generate stage section.'
+                    ),
                   });
                 }
               }
-            } catch {
-              // Handled below
-            }
+            });
           }
-        } catch (err) {
-          batchErr = formatGeminiError(err, 'Failed to generate stage memo sections.');
-        }
-
-        const remaining = uncached.filter((s) => !emittedKeys.has(s));
-        for (const sec of remaining) {
-          if (clientClosed) break;
-          writeEvent({
-            type: 'error',
-            section: sec,
-            error: batchErr || 'Section did not finish generating — click Retry.',
-          });
         }
       }
 
@@ -1967,9 +2229,13 @@ ${contextStr}`;
         res.end();
       }
     } catch (error) {
+      if (!(error instanceof MissingApiKeyError)) {
+        console.error('Error during stage batch scrutiny:', error);
+      }
+      const status = error instanceof MissingApiKeyError ? 503 : 500;
       const message = formatGeminiError(error, 'Stage batch generation failed.');
       if (!res.headersSent) {
-        res.status(500).json({ error: message });
+        res.status(status).json({ error: message });
       } else if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: 'fatal', error: message })}\n\n`);
         res.end();
@@ -1990,7 +2256,12 @@ ${contextStr}`;
         return;
       }
 
-      const ai = getAiClient();
+      const aiClient = resolveAiClient();
+      if (!aiClient.ok) {
+        res.status(aiClient.status).json({ error: aiClient.error });
+        return;
+      }
+      const ai = aiClient.ai;
 
       const systemInstruction =
         'You are a Senior Credit Analyst at the Special Asset Management Division (SAMD), Head Office, Sammilito Islami Bank PLC (Union Bank PLC Unit), Dhaka. Write formal, concise, objective banking memorandum prose strictly grounded in the provided document data and figures in Million BDT. Do not invent figures or facts not present in the context.';
@@ -2039,11 +2310,51 @@ ${JSON.stringify(context, null, 2)}`;
       const text = (response.text ?? '').trim();
       res.json({ text });
     } catch (error) {
-      console.error('Error generating IC Memo section:', error);
+      if (!(error instanceof MissingApiKeyError)) {
+        console.error('Error generating IC Memo section:', error);
+      }
+      const status = error instanceof MissingApiKeyError ? 503 : 500;
       const message = formatGeminiError(error, 'Failed to generate section.');
-      res.status(500).json({ error: message });
+      res.status(status).json({ error: message });
     }
   });
+
+  // Guarantee /api/* requests never fall through to Vite/SPA HTML fallback or Express HTML error pages
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
+
+  app.use(
+    (
+      err: unknown,
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction
+    ) => {
+      if (!req.path.startsWith('/api')) {
+        next(err);
+        return;
+      }
+      if (res.headersSent) {
+        next(err);
+        return;
+      }
+      const errObj = err as { status?: number; statusCode?: number; type?: string; message?: string };
+      const status =
+        typeof errObj?.status === 'number'
+          ? errObj.status
+          : typeof errObj?.statusCode === 'number'
+            ? errObj.statusCode
+            : 500;
+      const message =
+        errObj?.type === 'entity.too.large' || status === 413
+          ? 'Uploaded document payload exceeds the server request limit. Please reduce file size or page count and retry.'
+          : errObj?.type === 'entity.parse.failed'
+            ? 'Invalid JSON request payload.'
+            : errObj?.message || 'Unexpected API server error.';
+      res.status(status).json({ error: message });
+    }
+  );
 
   const httpServer = http.createServer(app);
 

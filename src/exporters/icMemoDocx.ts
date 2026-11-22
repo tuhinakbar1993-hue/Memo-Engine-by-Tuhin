@@ -208,6 +208,8 @@ export async function fetchImageBytes(url: string): Promise<Uint8Array | null> {
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') ?? '';
+    if (/text\/html/i.test(contentType)) return null;
     const buf = await res.arrayBuffer();
     return new Uint8Array(buf);
   } catch {

@@ -51,6 +51,83 @@ import {
   saveTemplateRecord,
 } from './utils/templateStorage';
 
+function isHtmlPayload(contentType: string, text: string): boolean {
+  if (/text\/html/i.test(contentType)) return true;
+  const trimmed = text.trimStart();
+  return /^<!doctype\b/i.test(trimmed) || /^<html\b/i.test(trimmed) || trimmed.startsWith('<');
+}
+
+function extractApiErrorFromRaw(
+  rawText: string,
+  contentType: string,
+  status: number,
+  fallbackLabel: string
+): string {
+  if (isHtmlPayload(contentType, rawText)) {
+    if (status === 413) {
+      return 'Uploaded document payload is too large for the server. Please upload a smaller file or fewer pages.';
+    }
+    if (status === 401 || status === 403) {
+      return `Authentication or session check intercepted ${fallbackLabel} (${status}). Please reload the page and try again.`;
+    }
+    if (status === 502 || status === 503 || status === 504) {
+      return `Server temporarily unavailable (${status}) while running ${fallbackLabel}. Please retry in a moment.`;
+    }
+    return `API returned an HTML page instead of JSON (${status}) for ${fallbackLabel}. Please reload the page or verify the backend server is running.`;
+  }
+  try {
+    const parsed = JSON.parse(rawText) as { error?: unknown; message?: unknown };
+    if (typeof parsed?.error === 'string' && parsed.error.trim()) {
+      return parsed.error;
+    }
+    if (typeof parsed?.message === 'string' && parsed.message.trim()) {
+      return parsed.message;
+    }
+  } catch {
+    // Non-JSON plain text response
+  }
+  const plain = rawText.trim().split('\n')[0]?.slice(0, 200);
+  return plain || `${fallbackLabel} (${status}).`;
+}
+
+async function parseJsonResponse<T>(response: Response, fallbackLabel: string): Promise<T> {
+  const contentType = response.headers.get('content-type') ?? '';
+  const rawText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(extractApiErrorFromRaw(rawText, contentType, response.status, fallbackLabel));
+  }
+
+  if (!rawText.trim()) {
+    throw new Error(`${fallbackLabel}: Server returned an empty response.`);
+  }
+
+  if (isHtmlPayload(contentType, rawText)) {
+    throw new Error(
+      `API endpoint returned an HTML page instead of JSON for ${fallbackLabel}. Please reload the page and retry.`
+    );
+  }
+
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    throw new Error(`${fallbackLabel}: Server returned an invalid JSON response.`);
+  }
+}
+
+async function assertSseResponseOrThrow(response: Response, fallbackLabel: string): Promise<void> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!response.ok) {
+    const rawText = await response.text().catch(() => '');
+    throw new Error(extractApiErrorFromRaw(rawText, contentType, response.status, fallbackLabel));
+  }
+  if (/text\/html/i.test(contentType)) {
+    throw new Error(
+      `API endpoint returned an HTML page instead of a streaming response for ${fallbackLabel}. Please reload the page and retry.`
+    );
+  }
+}
+
 const INITIAL_DOC_METAS: Record<DocumentKey, DocumentUploadMeta> = {
   branchProposal: {
     key: 'branchProposal',
@@ -277,6 +354,7 @@ export default function App() {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const serverCachedSourceIdRef = useRef<string | null>(null);
+  const cacheWarmPromiseRef = useRef<{ sourceId?: string; promise: Promise<void> } | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
   const stageBatchAbortRef = useRef<AbortController | null>(null);
   const caseDirtyRef = useRef(false);
@@ -612,22 +690,28 @@ export default function App() {
         serverCachedSourceIdRef.current = null;
         setBatchScrutiny(INITIAL_BATCH_SCRUTINY);
         // Pre-warm client page images + register server cache silently so AI calls start immediately
-        warmBranchProposalSource(file);
-        void prepareBranchProposalSource(file)
+        const warmPromise = prepareBranchProposalSource(file)
           .then(async (src) => {
             if (!src.sourceId) return;
+            if (cacheWarmPromiseRef.current?.promise === warmPromise) {
+              cacheWarmPromiseRef.current.sourceId = src.sourceId;
+            }
             const resp = await fetch('/api/gemini/cache-source', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sourceId: src.sourceId, branchProposalSource: src }),
             });
-            if (resp.ok) {
+            if (
+              resp.ok &&
+              (resp.headers.get('content-type') ?? '').toLowerCase().includes('application/json')
+            ) {
               serverCachedSourceIdRef.current = src.sourceId;
             }
           })
           .catch(() => {
             // Silent pre-warm fallback; on-demand scrutiny sends source directly if needed
           });
+        cacheWarmPromiseRef.current = { promise: warmPromise };
       } else if (key === 'outstanding') {
         const res = await parseOutstandingPdf(file, onStage);
         setExtractedDocsSync((prev) => ({ ...prev, outstanding: res.data }));
@@ -696,7 +780,10 @@ export default function App() {
           updateDocStage(key, 'Fetching sample...');
           try {
             const response = await fetch(url);
-            if (!response.ok) throw new Error(`Sample file missing: ${name}`);
+            const sampleContentType = response.headers.get('content-type') ?? '';
+            if (!response.ok || /text\/html/i.test(sampleContentType)) {
+              throw new Error(`Sample file missing: ${name}`);
+            }
             const blob = await response.blob();
             const file = new File([blob], name, { type: blob.type || 'application/pdf' });
             await handleFileUpload(key, file);
@@ -816,7 +903,7 @@ export default function App() {
     });
   };
 
-  const buildScrutinyContext = () => {
+  const buildScrutinyContext = (mode: 'ic' | 'stage' = 'stage') => {
     const latest = caseRef.current;
     const latestMemo = resolveICMemo(
       latest.extractedDocs,
@@ -825,6 +912,29 @@ export default function App() {
       latest.overrides,
       latest.manualEditedSections
     );
+    const extractedSummaries = {
+      outstanding: latest.extractedDocs.outstanding,
+      partyPerformance: latest.extractedDocs.partyPerformance,
+      overdue: latest.extractedDocs.overdue,
+      accountStatement: latest.extractedDocs.accountStatement,
+      cibReport: latest.extractedDocs.cibReport,
+      costOfFund: latest.extractedDocs.costOfFund,
+    };
+
+    if (mode === 'ic') {
+      return {
+        placeholders: latestMemo.placeholders,
+        sourceOfRepayment: latestMemo.sourceOfRepayment,
+        clientPrayer: latestMemo.clientPrayer,
+        branchVisitReport: latestMemo.branchVisitReport,
+        justificationLines: latestMemo.justificationLines,
+        sec13BranchRecommendation: latestMemo.sec13BranchRecommendation,
+        sec14IccdRecommendation: latestMemo.sec14IccdRecommendation,
+        extractedSummaries,
+      };
+    }
+
+    const { branchProposal: _omitNestedBp, ...icMemoFinalizedClean } = latestMemo;
     return {
       placeholders: latestMemo.placeholders,
       sourceOfRepayment: latestMemo.sourceOfRepayment,
@@ -837,56 +947,89 @@ export default function App() {
       sec2NonFundedNote: latestMemo.sec2NonFundedNote,
       sec7OthersNote: latestMemo.sec7OthersNote,
       sectionSummaries: latestMemo.sectionSummaries,
-      icMemoFinalized: latestMemo,
+      icMemoFinalized: icMemoFinalizedClean,
       icMemoAiSections: latest.aiSections,
-      extractedSummaries: {
-        outstanding: latest.extractedDocs.outstanding,
-        partyPerformance: latest.extractedDocs.partyPerformance,
-        overdue: latest.extractedDocs.overdue,
-        accountStatement: latest.extractedDocs.accountStatement,
-        cibReport: latest.extractedDocs.cibReport,
-        costOfFund: latest.extractedDocs.costOfFund,
-      },
-      branchProposal: latest.extractedDocs.branchProposal,
+      extractedSummaries,
       stageInputs: latest.stageInputs,
       stageSections: latest.stageAiSections,
     };
+  };
+
+  const isNarrativeScrutinySection = (section: ScrutinySectionKey): boolean =>
+    section === 'justification' ||
+    section === 'sec1NatureOfBusiness' ||
+    section === 'sec8SourceOfRepayment' ||
+    section === 'clientPrayer' ||
+    section === 'branchVisit' ||
+    section === 'sec13BranchRecommendation' ||
+    section === 'sec14IccdRecommendation' ||
+    section === 'samdObservation';
+
+  const applyScrutinizedSectionsBatch = (
+    items: Array<{ section: ScrutinySectionKey; result: Record<string, unknown> }>,
+    immediatePersist = true
+  ) => {
+    if (items.length === 0) return;
+
+    let clearSec8Manual = false;
+    const codesToClear: string[] = [];
+
+    setAiSectionsSync((prev) => {
+      const next = { ...prev };
+      for (const { section, result } of items) {
+        if (isNarrativeScrutinySection(section)) {
+          (next as Record<string, unknown>)[section] = String(result.text ?? '').trim();
+          if (section === 'sec8SourceOfRepayment') {
+            clearSec8Manual = true;
+          }
+        } else {
+          (next as Record<string, unknown>)[section] = result;
+        }
+        if (section === 'justification') codesToClear.push('#51#');
+        else if (section === 'sec1NatureOfBusiness') codesToClear.push('#54#');
+        else if (section === 'sec2LiabilityOurBank') codesToClear.push('#56#', '#58#');
+        else if (section === 'sec4CibStatus') codesToClear.push('#62#');
+      }
+      return next;
+    });
+
+    if (clearSec8Manual) {
+      setManualInputsSync((prev) =>
+        prev.sourceOfRepayment === '' ? prev : { ...prev, sourceOfRepayment: '' }
+      );
+    }
+
+    if (codesToClear.length > 0) {
+      setOverridesSync((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const c of codesToClear) {
+          if (next[c] !== undefined) {
+            delete next[c];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+
+    setManualEditedSectionsSync((prev) => {
+      const next = { ...prev };
+      for (const { section } of items) {
+        next[section] = false;
+      }
+      return next;
+    });
+
+    syncAppliedSnapshotFromRef();
+    void persistCentralCaseNow(immediatePersist);
   };
 
   const applyScrutinizedSectionResult = (
     section: ScrutinySectionKey,
     result: Record<string, unknown>
   ) => {
-    const isNarrative =
-      section === 'justification' ||
-      section === 'sec1NatureOfBusiness' ||
-      section === 'sec8SourceOfRepayment' ||
-      section === 'clientPrayer' ||
-      section === 'branchVisit' ||
-      section === 'sec13BranchRecommendation' ||
-      section === 'sec14IccdRecommendation' ||
-      section === 'samdObservation';
-
-    if (isNarrative) {
-      const text = String(result.text ?? '').trim();
-      setAiSectionsSync((prev) => ({
-        ...prev,
-        [section]: text,
-      }));
-      if (section === 'sec8SourceOfRepayment') {
-        setManualInputsSync((prev) => ({ ...prev, sourceOfRepayment: '' }));
-      }
-    } else {
-      setAiSectionsSync((prev) => ({
-        ...prev,
-        [section]: result,
-      }));
-    }
-
-    clearOverridesForSection(section);
-    setManualEditedSectionsSync((prev) => ({ ...prev, [section]: false }));
-    syncAppliedSnapshotFromRef();
-    void persistCentralCaseNow(true);
+    applyScrutinizedSectionsBatch([{ section, result }], true);
   };
 
   const fetchWithSourceCache = async (
@@ -895,6 +1038,16 @@ export default function App() {
     source: BranchProposalSource,
     signal?: AbortSignal
   ): Promise<Response> => {
+    if (
+      source.sourceId &&
+      serverCachedSourceIdRef.current !== source.sourceId &&
+      cacheWarmPromiseRef.current &&
+      (!cacheWarmPromiseRef.current.sourceId ||
+        cacheWarmPromiseRef.current.sourceId === source.sourceId)
+    ) {
+      await cacheWarmPromiseRef.current.promise.catch(() => undefined);
+    }
+
     const canReuseServerCache =
       Boolean(source.sourceId) && serverCachedSourceIdRef.current === source.sourceId;
 
@@ -950,7 +1103,7 @@ export default function App() {
 
     try {
       const branchProposalSource = await prepareBranchProposalSource(branchProposalFile);
-      const context = buildScrutinyContext();
+      const context = buildScrutinyContext('ic');
 
       const response = await fetchWithSourceCache(
         '/api/gemini/scrutinize-section',
@@ -958,17 +1111,12 @@ export default function App() {
         branchProposalSource
       );
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `AI scrutiny failed (${response.status}).`);
-      }
-
-      const data = (await response.json()) as {
+      const data = await parseJsonResponse<{
         result?: Record<string, unknown>;
         insufficient?: boolean;
         insufficientReason?: string | null;
         sourceId?: string;
-      };
+      }>(response, 'AI scrutiny failed');
       if (data.sourceId) {
         serverCachedSourceIdRef.current = data.sourceId;
       } else if (branchProposalSource.sourceId) {
@@ -1029,7 +1177,7 @@ export default function App() {
 
     try {
       const branchProposalSource = await prepareBranchProposalSource(branchProposalFile);
-      const context = buildScrutinyContext();
+      const context = buildScrutinyContext('ic');
 
       const response = await fetchWithSourceCache(
         '/api/gemini/scrutinize-section',
@@ -1037,17 +1185,12 @@ export default function App() {
         branchProposalSource
       );
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `Retry failed (${response.status}).`);
-      }
-
-      const data = (await response.json()) as {
+      const data = await parseJsonResponse<{
         result?: Record<string, unknown>;
         insufficient?: boolean;
         insufficientReason?: string | null;
         sourceId?: string;
-      };
+      }>(response, 'Retry failed');
       if (data.sourceId) {
         serverCachedSourceIdRef.current = data.sourceId;
       } else if (branchProposalSource.sourceId) {
@@ -1147,7 +1290,7 @@ export default function App() {
 
     try {
       const branchProposalSource = await prepareBranchProposalSource(branchProposalFile);
-      const context = buildScrutinyContext();
+      const context = buildScrutinyContext('ic');
 
       const response = await fetchWithSourceCache(
         '/api/gemini/scrutinize-all',
@@ -1156,10 +1299,7 @@ export default function App() {
         controller.signal
       );
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `Batch AI scrutiny failed (${response.status}).`);
-      }
+      await assertSseResponseOrThrow(response, 'Batch AI scrutiny failed');
 
       if (branchProposalSource.sourceId) {
         serverCachedSourceIdRef.current = branchProposalSource.sourceId;
@@ -1173,13 +1313,14 @@ export default function App() {
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const frames = buffer.split(/\r?\n\r?\n/);
-        buffer = frames.pop() ?? '';
+      const processFrames = (frames: string[]) => {
+        const sectionItems: Array<{ section: ScrutinySectionKey; result: Record<string, unknown> }> = [];
+        const sectionStatuses: Array<{
+          section: ScrutinySectionKey;
+          insufficient: boolean;
+          reason: string;
+        }> = [];
+        const errorItems: Array<{ section: ScrutinySectionKey; error: string }> = [];
 
         for (const frame of frames) {
           const dataLines = frame
@@ -1201,35 +1342,20 @@ export default function App() {
             };
 
             if (event.type === 'section' && event.section && event.result) {
-              applyScrutinizedSectionResult(event.section, event.result);
               const sec = event.section;
-              const isInsufficient = Boolean(event.insufficient);
-              const reason =
-                event.insufficientReason?.trim() ||
-                'Relevant details for this section were not available or sufficient in the uploaded Branch Proposal.';
-              setBatchScrutiny((prev) => ({
-                ...prev,
-                completedSections: prev.completedSections.includes(sec)
-                  ? prev.completedSections
-                  : [...prev.completedSections, sec],
-                failedSections: prev.failedSections.filter((f) => f.section !== sec),
-                insufficientSections: isInsufficient
-                  ? [
-                      ...prev.insufficientSections.filter((item) => item.section !== sec),
-                      { section: sec, reason },
-                    ]
-                  : prev.insufficientSections.filter((item) => item.section !== sec),
-              }));
+              sectionItems.push({ section: sec, result: event.result });
+              sectionStatuses.push({
+                section: sec,
+                insufficient: Boolean(event.insufficient),
+                reason:
+                  event.insufficientReason?.trim() ||
+                  'Relevant details for this section were not available or sufficient in the uploaded Branch Proposal.',
+              });
             } else if (event.type === 'error' && event.section) {
-              const sec = event.section;
-              const errMsg = event.error || 'Failed to generate section.';
-              setBatchScrutiny((prev) => ({
-                ...prev,
-                failedSections: [
-                  ...prev.failedSections.filter((f) => f.section !== sec),
-                  { section: sec, error: errMsg },
-                ],
-              }));
+              errorItems.push({
+                section: event.section,
+                error: event.error || 'Failed to generate section.',
+              });
             } else if (event.type === 'fatal') {
               setAiError(event.error || 'Batch AI scrutiny failed.');
             } else if (event.type === 'done' && event.sourceId) {
@@ -1239,12 +1365,73 @@ export default function App() {
             // Ignore malformed SSE chunk
           }
         }
+
+        if (sectionItems.length > 0) {
+          applyScrutinizedSectionsBatch(sectionItems, false);
+        }
+
+        if (sectionStatuses.length > 0 || errorItems.length > 0) {
+          setBatchScrutiny((prev) => {
+            let nextCompleted = prev.completedSections;
+            let nextFailed = prev.failedSections;
+            let nextInsufficient = prev.insufficientSections;
+
+            for (const st of sectionStatuses) {
+              if (!nextCompleted.includes(st.section)) {
+                nextCompleted =
+                  nextCompleted === prev.completedSections
+                    ? [...nextCompleted, st.section]
+                    : (nextCompleted.push(st.section), nextCompleted);
+              }
+              nextFailed = nextFailed.filter((f) => f.section !== st.section);
+              nextInsufficient = st.insufficient
+                ? [
+                    ...nextInsufficient.filter((item) => item.section !== st.section),
+                    { section: st.section, reason: st.reason },
+                  ]
+                : nextInsufficient.filter((item) => item.section !== st.section);
+            }
+
+            for (const errItem of errorItems) {
+              nextFailed = [
+                ...nextFailed.filter((f) => f.section !== errItem.section),
+                { section: errItem.section, error: errItem.error },
+              ];
+            }
+
+            return {
+              ...prev,
+              completedSections: nextCompleted,
+              failedSections: nextFailed,
+              insufficientSections: nextInsufficient,
+            };
+          });
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          const tail = buffer + decoder.decode();
+          if (tail.trim()) {
+            processFrames(tail.split(/\r?\n\r?\n/));
+          }
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? '';
+        if (frames.length > 0) {
+          processFrames(frames);
+        }
       }
     } catch (err) {
       if ((err as { name?: string })?.name !== 'AbortError') {
         setAiError(err instanceof Error ? err.message : 'Batch AI scrutiny failed.');
       }
     } finally {
+      void persistCentralCaseNow(true);
       setBatchScrutiny((prev) => {
         const completedSet = new Set(prev.completedSections);
         const failedSet = new Set(prev.failedSections.map((f) => f.section));
@@ -1343,17 +1530,12 @@ export default function App() {
         context,
       });
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `Stage AI scrutiny failed (${response.status}).`);
-      }
-
-      const data = (await response.json()) as {
+      const data = await parseJsonResponse<{
         result?: { text?: string };
         insufficient?: boolean;
         insufficientReason?: string | null;
         sourceId?: string;
-      };
+      }>(response, 'Stage AI scrutiny failed');
       if (data.sourceId) {
         serverCachedSourceIdRef.current = data.sourceId;
       }
@@ -1416,17 +1598,12 @@ export default function App() {
         context,
       });
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `Retry failed (${response.status}).`);
-      }
-
-      const data = (await response.json()) as {
+      const data = await parseJsonResponse<{
         result?: { text?: string };
         insufficient?: boolean;
         insufficientReason?: string | null;
         sourceId?: string;
-      };
+      }>(response, 'Retry failed');
       if (data.sourceId) {
         serverCachedSourceIdRef.current = data.sourceId;
       }
@@ -1528,17 +1705,14 @@ export default function App() {
     });
 
     try {
-      const context = buildScrutinyContext();
+      const context = buildScrutinyContext('stage');
       const response = await fetchStageEndpoint(
         '/api/gemini/scrutinize-stage-all',
         { docType, sections: targetSections, context },
         controller.signal
       );
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `Stage batch scrutiny failed (${response.status}).`);
-      }
+      await assertSseResponseOrThrow(response, 'Stage batch scrutiny failed');
 
       const reader = response.body?.getReader();
       if (!reader) {
@@ -1548,13 +1722,14 @@ export default function App() {
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const frames = buffer.split(/\r?\n\r?\n/);
-        buffer = frames.pop() ?? '';
+      const processStageFrames = (frames: string[]) => {
+        const sectionItems: Array<{
+          section: StageScrutinySectionKey;
+          text: string;
+          insufficient: boolean;
+          reason: string;
+        }> = [];
+        const errorItems: Array<{ section: StageScrutinySectionKey; error: string }> = [];
 
         for (const frame of frames) {
           const dataLines = frame
@@ -1575,40 +1750,19 @@ export default function App() {
             };
 
             if (event.type === 'section' && event.section && event.result) {
-              const sec = event.section;
-              const text = String(event.result.text ?? '').trim();
-              setStageAiSectionsSync((prev) => ({ ...prev, [sec]: text }));
-              setStageManualEditedSectionsSync((prev) => ({ ...prev, [sec]: false }));
-              syncAppliedSnapshotFromRef();
-              void persistCentralCaseNow(true);
-
-              const isInsufficient = Boolean(event.insufficient);
-              const reason =
-                event.insufficientReason?.trim() ||
-                'Some reference details were incomplete in the current case documents.';
-              setStageBatchScrutiny((prev) => ({
-                ...prev,
-                completedSections: prev.completedSections.includes(sec)
-                  ? prev.completedSections
-                  : [...prev.completedSections, sec],
-                failedSections: prev.failedSections.filter((f) => f.section !== sec),
-                insufficientSections: isInsufficient
-                  ? [
-                      ...prev.insufficientSections.filter((item) => item.section !== sec),
-                      { section: sec, reason },
-                    ]
-                  : prev.insufficientSections.filter((item) => item.section !== sec),
-              }));
+              sectionItems.push({
+                section: event.section,
+                text: String(event.result.text ?? '').trim(),
+                insufficient: Boolean(event.insufficient),
+                reason:
+                  event.insufficientReason?.trim() ||
+                  'Some reference details were incomplete in the current case documents.',
+              });
             } else if (event.type === 'error' && event.section) {
-              const sec = event.section;
-              const errMsg = event.error || 'Failed to generate section.';
-              setStageBatchScrutiny((prev) => ({
-                ...prev,
-                failedSections: [
-                  ...prev.failedSections.filter((f) => f.section !== sec),
-                  { section: sec, error: errMsg },
-                ],
-              }));
+              errorItems.push({
+                section: event.section,
+                error: event.error || 'Failed to generate section.',
+              });
             } else if (event.type === 'fatal') {
               setAiError(event.error || 'Stage batch AI scrutiny failed.');
             } else if (event.type === 'done' && event.sourceId) {
@@ -1618,12 +1772,88 @@ export default function App() {
             // Ignore malformed SSE chunk
           }
         }
+
+        if (sectionItems.length > 0) {
+          setStageAiSectionsSync((prev) => {
+            const next = { ...prev };
+            for (const item of sectionItems) {
+              next[item.section] = item.text;
+            }
+            return next;
+          });
+          setStageManualEditedSectionsSync((prev) => {
+            const next = { ...prev };
+            for (const item of sectionItems) {
+              next[item.section] = false;
+            }
+            return next;
+          });
+          syncAppliedSnapshotFromRef();
+          void persistCentralCaseNow(false);
+        }
+
+        if (sectionItems.length > 0 || errorItems.length > 0) {
+          setStageBatchScrutiny((prev) => {
+            let nextCompleted = prev.completedSections;
+            let nextFailed = prev.failedSections;
+            let nextInsufficient = prev.insufficientSections;
+
+            for (const item of sectionItems) {
+              if (!nextCompleted.includes(item.section)) {
+                nextCompleted =
+                  nextCompleted === prev.completedSections
+                    ? [...nextCompleted, item.section]
+                    : (nextCompleted.push(item.section), nextCompleted);
+              }
+              nextFailed = nextFailed.filter((f) => f.section !== item.section);
+              nextInsufficient = item.insufficient
+                ? [
+                    ...nextInsufficient.filter((entry) => entry.section !== item.section),
+                    { section: item.section, reason: item.reason },
+                  ]
+                : nextInsufficient.filter((entry) => entry.section !== item.section);
+            }
+
+            for (const errItem of errorItems) {
+              nextFailed = [
+                ...nextFailed.filter((f) => f.section !== errItem.section),
+                { section: errItem.section, error: errItem.error },
+              ];
+            }
+
+            return {
+              ...prev,
+              completedSections: nextCompleted,
+              failedSections: nextFailed,
+              insufficientSections: nextInsufficient,
+            };
+          });
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          const tail = buffer + decoder.decode();
+          if (tail.trim()) {
+            processStageFrames(tail.split(/\r?\n\r?\n/));
+          }
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? '';
+        if (frames.length > 0) {
+          processStageFrames(frames);
+        }
       }
     } catch (err) {
       if ((err as { name?: string })?.name !== 'AbortError') {
         setAiError(err instanceof Error ? err.message : 'Stage batch AI scrutiny failed.');
       }
     } finally {
+      void persistCentralCaseNow(true);
       setStageBatchScrutiny((prev) => {
         const completedSet = new Set(prev.completedSections);
         const failedSet = new Set(prev.failedSections.map((f) => f.section));

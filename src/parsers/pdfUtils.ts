@@ -142,8 +142,13 @@ export async function extractPdfLines(file: File | ArrayBuffer): Promise<{
   return result;
 }
 
+const pdfImagesCache = new Map<
+  string,
+  Array<{ mimeType: string; data: string; width: number; height: number }>
+>();
+
 /**
- * Renders PDF pages in parallel to optimally sized JPEG images (max 1400px width)
+ * Renders PDF pages in parallel to optimally sized JPEG images
  * for ultra-fast network transfer and Gemini multimodal extraction.
  */
 export async function renderPdfPagesToImages(
@@ -151,6 +156,13 @@ export async function renderPdfPagesToImages(
   maxWidth = 1400,
   maxPages = 10
 ): Promise<Array<{ mimeType: string; data: string; width: number; height: number }>> {
+  const fileKey = getFileCacheKey(file);
+  const imgCacheKey = fileKey ? `${fileKey}:${maxWidth}:${maxPages}` : null;
+  if (imgCacheKey) {
+    const cached = pdfImagesCache.get(imgCacheKey);
+    if (cached) return cached;
+  }
+
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(buffer),
@@ -164,7 +176,7 @@ export async function renderPdfPagesToImages(
     const p = idx + 1;
     const page = await pdf.getPage(p);
     const baseViewport = page.getViewport({ scale: 1 });
-    const targetScale = Math.min(1.65, Math.max(1.15, maxWidth / baseViewport.width));
+    const targetScale = Math.min(1.65, Math.max(1.1, maxWidth / baseViewport.width));
     const viewport = page.getViewport({ scale: targetScale });
 
     const canvas = document.createElement('canvas');
@@ -180,7 +192,7 @@ export async function renderPdfPagesToImages(
       canvas,
     }).promise;
 
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.62);
     const base64 = dataUrl.split(',')[1] ?? '';
     return {
       mimeType: 'image/jpeg',
@@ -191,7 +203,11 @@ export async function renderPdfPagesToImages(
   });
 
   const results = await Promise.all(renderPromises);
-  return results.filter(
+  const filtered = results.filter(
     (r): r is { mimeType: string; data: string; width: number; height: number } => r !== null
   );
+  if (imgCacheKey) {
+    pdfImagesCache.set(imgCacheKey, filtered);
+  }
+  return filtered;
 }

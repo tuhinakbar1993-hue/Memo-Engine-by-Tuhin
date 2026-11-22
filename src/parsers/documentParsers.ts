@@ -201,6 +201,7 @@ export async function parseBranchProposalFile(
     const grids = docx.tables.map((t) => t.rows);
     const parsed = parseBranchProposalFromStructured(grids, docx.lines, docx.rawText);
     setCachedParse('bp_source', file, {
+      sourceId: getFileSignature('src', file),
       fileName: file.name,
       rawText: docx.rawText,
       pageImages: [],
@@ -218,6 +219,7 @@ export async function parseBranchProposalFile(
     const grids = excel.sheets.map((s) => s.typedRows);
     const parsed = parseBranchProposalFromStructured(grids, excel.lines, excel.rawText);
     setCachedParse('bp_source', file, {
+      sourceId: getFileSignature('src', file),
       fileName: file.name,
       rawText: excel.rawText,
       pageImages: [],
@@ -342,7 +344,7 @@ export async function prepareBranchProposalSource(file: File): Promise<BranchPro
     let rawText = getCachedParse<string>('bp_raw', file);
     const [extractedText, rendered] = await Promise.all([
       rawText === undefined ? extractPdfLines(file).then((r) => r.rawText) : Promise.resolve(rawText),
-      renderPdfPagesToImages(file, 1200, 12),
+      renderPdfPagesToImages(file, 840, 12),
     ]);
     if (rawText === undefined) {
       rawText = extractedText;

@@ -326,6 +326,9 @@ export function buildTemplateTokenMap(
     proposalDate: ph['#1#'] || '',
     dated: ph['#1#'] || '',
     memoDate: ph['#1#'] || '',
+    accountName: ph['#2#'] || '',
+    acName: ph['#2#'] || '',
+    nameOfConcern: ph['#2#'] || '',
     accountNo: ph['#2#'] || '',
     accountNumber: ph['#2#'] || '',
     acNo: ph['#2#'] || '',
@@ -512,7 +515,11 @@ function isSectionBoundaryText(text: string): boolean {
   ) {
     return true;
   }
-  if (/^(?:[bc]\.\s*(?:Investment\s+was\s+not\s+created|The\s+client\s+is\s+not\s+a\s+willful)|c\.\s*Others\s*:?)/i.test(t)) {
+  if (
+    /^(?:[bc]\.\s*(?:Investment\s+was\s+not\s+created|The\s+client\s+is\s+not\s+a\s+willful)|(?:4|5)[.)]\s*(?:Investment\s+was\s+not\s+created|The\s+client\s+is\s+not\s+a\s+willful)|c\.\s*Others\s*:?)/i.test(
+      t
+    )
+  ) {
     return true;
   }
   if (/^(?:Particular\s+of\s+the\s+Proprietor|Remarks\s*:\s*Director\s+of\s+any\s+Bank)/i.test(t)) {
@@ -544,14 +551,14 @@ function collectContiguousSubParagraphs(headingP: Element, stopAtSubBullets = fa
       if (el.localName === 'p') {
         const subTxt = getParagraphPlainText(el).trim();
         if (isSectionBoundaryText(subTxt)) break;
-        if (stopAtSubBullets && /^[bc]\.\s+/i.test(subTxt)) break;
+        if (stopAtSubBullets && (/^[bc]\.\s+/i.test(subTxt) || /^[45][.)]\s+/i.test(subTxt))) break;
         out.push(el);
       } else if (el.localName === 'sdt') {
         const sdtP = firstDescendant(el, 'p');
         if (sdtP) {
           const subTxt = getParagraphPlainText(sdtP).trim();
           if (isSectionBoundaryText(subTxt)) break;
-          if (stopAtSubBullets && /^[bc]\.\s+/i.test(subTxt)) break;
+          if (stopAtSubBullets && (/^[bc]\.\s+/i.test(subTxt) || /^[45][.)]\s+/i.test(subTxt))) break;
           out.push(sdtP);
         }
       }
@@ -875,11 +882,12 @@ function applyStructuralPopulations(
       nonEmpty(ph['#62#']) &&
       !paraReplacedAnyOf(replacedTokensMap, pEl, ['#62#', '#cibDate#', '{{cibDate}}'])
     ) {
-      const m = text.match(/Report\s+dated\s+(.+?)\s+shows/i);
-      if (m) {
-        const start = text.indexOf(m[1]);
+      const m = text.match(/Report\s+dated\s+(.+?)\s*shows/i);
+      if (m && m[1]) {
+        const trimmedTarget = m[1].trim();
+        const start = text.indexOf(trimmedTarget, text.toLowerCase().search(/report\s+dated/));
         if (start !== -1) {
-          replaceSpanInParagraph(xmlDoc, pEl, start, start + m[1].length, ph['#62#']);
+          replaceSpanInParagraph(xmlDoc, pEl, start, start + trimmedTarget.length, ph['#62#']);
         }
       }
       continue;
@@ -1118,7 +1126,12 @@ function applyStructuralPopulations(
             if (subParas.length === 0 && colonIdx !== -1 && text.slice(colonIdx + 1).trim().length > 0) {
               setParagraphValueAfterColon(xmlDoc, pEl, cleanLines.join('\n'));
             } else {
-              const formattedLines = cleanLines.map((l, idx) => (idx === 0 ? `a. ${l}` : l));
+              const usesDirectNumbers = subParas.some((sp) =>
+                /^\s*1[.)]\s*/.test(getParagraphPlainText(sp))
+              );
+              const formattedLines = usesDirectNumbers
+                ? cleanLines
+                : cleanLines.map((l, idx) => (idx === 0 && !/^a[.)]\s+/i.test(l) ? `a. ${l}` : l));
               populateSubParagraphLines(xmlDoc, pEl, subParas, formattedLines, '120');
             }
           }
@@ -1127,9 +1140,9 @@ function applyStructuralPopulations(
       continue;
     }
 
-    // 15. Observation and Recommendation of SAMD:
+    // 14 / 15. Observation and Recommendation of SAMD:
     if (
-      /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\s*:?/i.test(
+      /^(?:(?:14|15)\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\s*:?/i.test(
         normText
       ) &&
       nonEmpty(memo.samdObservation)
@@ -1728,7 +1741,8 @@ function applyStructuralPopulations(
       else if (/^Date of Original Investment$/i.test(label)) trySet(nonEmpty(sp?.dateOfOriginalInvestment));
       else if (/Disbursement Manager$/i.test(label)) trySet(nonEmpty(sp?.firstDisbursementManager));
       else if (/First Date of Classification/i.test(label)) trySet(nonEmpty(sp?.firstDateOfClassification));
-      else if (/^(Account\s*No\.?|A\/C\s*No\.?)$/i.test(label)) trySet(nonEmpty(ph['#2#']));
+      else if (/^(?:A\/C\s*Name|Account\s*Name|Name\s+of\s+(?:the\s+)?Concern)$/i.test(label)) trySet(nonEmpty(ph['#2#']));
+      else if (/^(Account\s*No\.?|A\/C\s*No\.?)$/i.test(label)) trySet(nonEmpty(ph['#36#']) || nonEmpty(ph['#2#']));
       else if (/^(Branch|Branch\s*Name)$/i.test(label)) trySet(nonEmpty(ph['#3#']));
       else if (/^(Proposal\s*Date|Sanction\s*Date|Memo\s*Date|Dated)$/i.test(label)) trySet(nonEmpty(ph['#1#']));
       else if (/^(Proposed\s*Waiver|Waiver\s*Amount)$/i.test(label)) trySet(nonEmpty(ph['#4#']));
@@ -1740,7 +1754,7 @@ function applyStructuralPopulations(
       else if (/^(?:13\s*[.)]\s*)?Recommendation\s+of\s+(?:the\s+)?Branch$/i.test(label)) trySet(nonEmpty(memo.sec13BranchRecommendation));
       else if (/^(?:14\s*[.)]\s*)?Recommendation\s+of\s+(?:Internal\s+Control|IC\s*&?\s*CD|ICCD)/i.test(label)) {
         trySet(nonEmpty(memo.sec14IccdRecommendation));
-      } else if (/^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)$/i.test(label)) {
+      } else if (/^(?:(?:14|15)\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)$/i.test(label)) {
         trySet(nonEmpty(memo.samdObservation));
       } else if (/^Justification\s+of\s+(?:the\s+)?Proposed\s+Facility$/i.test(label)) trySet(nonEmpty(memo.justificationLines));
       else if (stageMemo) {
@@ -1826,7 +1840,7 @@ function applyStructuralPopulations(
   );
   ensureHeadingValue(
     memo.samdObservation,
-    /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
+    /^(?:(?:14|15)\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
     true
   );
 
@@ -2098,9 +2112,9 @@ export async function verifyPopulatedDocxBlob(
     ['#iccdRecommendation#', '#sec14IccdRecommendation#', '{{iccdRecommendation}}', '{{sec14IccdRecommendation}}']
   );
   checkNarrative(
-    '15. Observation and Recommendation of SAMD',
+    'Observation and Recommendation of SAMD',
     memo.samdObservation,
-    /^(?:15\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
+    /^(?:(?:14|15)\s*[.)]\s*)?(?:Observations?\s*(?:and|&|\/)\s*Recommendations?\s*of\s*SAMD|SAMD\s*Observations?(?:\s*(?:and|&|\/)\s*Recommendations?)?)\b/i,
     ['#samdObservation#', '#samd#', '{{samdObservation}}']
   );
 
@@ -2227,8 +2241,10 @@ export function renderTemplatePreviewBlocks(
         text = `${text}\n${memo.sec13BranchRecommendation}`;
       } else if (/^(?:14\.\s*)?Recommendation of (?:Internal Control|IC\s*&?\s*CD|ICCD)/i.test(text) && nonEmpty(memo.sec14IccdRecommendation)) {
         text = `14. Recommendation of Internal Control & Compliance Division: ${memo.sec14IccdRecommendation}`;
-      } else if (/^(?:15\.\s*)?(?:Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD|SAMD\s*Observation)/i.test(text) && nonEmpty(memo.samdObservation)) {
-        text = `15. Observation and Recommendation of SAMD:\n${memo.samdObservation}`;
+      } else if (/^(?:(?:14|15)\s*[.)]\s*)?(?:Observation\s*(?:and|&)\s*Recommendation\s*of\s*SAMD|SAMD\s*Observation)/i.test(text) && nonEmpty(memo.samdObservation)) {
+        const prefixMatch = text.match(/^(14|15)\s*[.)]\s*/);
+        const num = prefixMatch ? prefixMatch[1] : '15';
+        text = `${num}. Observation and Recommendation of SAMD:\n${memo.samdObservation}`;
       }
       return { type: 'paragraph', text };
     }

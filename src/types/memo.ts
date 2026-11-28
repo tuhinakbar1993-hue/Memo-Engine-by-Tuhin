@@ -209,8 +209,9 @@ export interface OverdueData {
 }
 
 export interface AccountStatementData {
-  accountNumber: string; // #2#
-  acNo: string; // #36#
+  accountName: string; // #2# A/C Name
+  accountNumber: string; // Legacy A/C No. reference
+  acNo: string; // #36# A/C No.
   branchName: string; // #3# (2nd line of doc)
   customerId: string; // #69#
   lastBalanceBDT: number | null; // #35#

@@ -960,7 +960,7 @@ export async function parseOverduePdf(
 
 /**
  * 5. Account Statement (PDF, Word .docx, or Excel .xlsx/.xls)
- * Extracts #2# Account number, #36# A/C No., #3# Branch name, #69# Customer ID, #35# Last row Balance
+ * Extracts #2# A/C Name, #36# A/C No., #3# Branch name, #69# Customer ID, #35# Last row Balance
  */
 export async function parseAccountStatementPdf(
   file: File,
@@ -975,6 +975,13 @@ export async function parseAccountStatementPdf(
     return cached;
   }
 
+  const extractAccountNameFromLineText = (lineText: string): string => {
+    const m = lineText.match(
+      /(?:A\/C|Account)\s*(?:Name|Title)\s*:?\s*(.+?)(?=\s*\||\s+(?:Opening\s*Date|Type\s+of\s+Account|Last\s+Tr\.?\s*Date|Account\s+Status|Date\s+From|Mobile\s*No\.?|Phone|Old\s*A\/C)\b|$)/i
+    );
+    return m ? cleanText(m[1].replace(/^:\s*/, '')) : '';
+  };
+
   if (isDocxFile(file) || isExcelFile(file)) {
     const { grids, textGrids, lines, rawText } = await extractStructuredGrids(file, onStage);
     onStage?.('Extracting account & balance...');
@@ -982,6 +989,7 @@ export async function parseAccountStatementPdf(
     let branchName = '';
     let customerId = '';
     let acNo = '';
+    let accountName = '';
     let lastBalanceBDT: number | null = null;
 
     // 1. Scan lines for explicit labels & 2nd-line branch fallback
@@ -998,6 +1006,10 @@ export async function parseAccountStatementPdf(
       if (!acNo) {
         const acMatch = line.match(/(?:A\/C|Account)\s*(?:No\.?|Number)\s*:?\s*([A-Za-z0-9-]+)/i);
         if (acMatch) acNo = cleanText(acMatch[1]);
+      }
+      if (!accountName) {
+        const extractedName = extractAccountNameFromLineText(line);
+        if (extractedName) accountName = extractedName;
       }
       if (!branchName) {
         const brMatch = line.match(/\bBranch(?:\s*Name)?\s*:?\s*([A-Za-z0-9 .,&()-]+)/i);
@@ -1027,6 +1039,14 @@ export async function parseAccountStatementPdf(
             for (let k = c + 1; k < row.length; k++) {
               if (row[k]?.trim()) {
                 acNo = cleanText(row[k]);
+                break;
+              }
+            }
+          }
+          if (!accountName && /^(?:A\/C|Account)\s*(?:Name|Title)\s*:?$/i.test(cellTxt.trim())) {
+            for (let k = c + 1; k < row.length; k++) {
+              if (row[k]?.trim() && !/Opening\s*Date|Type\s+of/i.test(row[k])) {
+                accountName = cleanText(row[k].replace(/^:\s*/, ''));
                 break;
               }
             }
@@ -1092,6 +1112,7 @@ export async function parseAccountStatementPdf(
 
     return setCachedParse('acctStmt', file, {
       data: {
+        accountName,
         accountNumber: acNo,
         acNo,
         branchName,
@@ -1118,6 +1139,7 @@ export async function parseAccountStatementPdf(
 
   let customerId = '';
   let acNo = '';
+  let accountName = '';
 
   for (const line of lines) {
     const cidMatch = line.text.match(/Customer\s*ID\s*:\s*([A-Za-z0-9-]+)/i);
@@ -1127,6 +1149,33 @@ export async function parseAccountStatementPdf(
     const acMatch = line.text.match(/A\/C\s*No\.?\s*:\s*([A-Za-z0-9-]+)/i);
     if (acMatch && !acNo) {
       acNo = cleanText(acMatch[1]);
+    }
+    if (!accountName && /(?:A\/C|Account)\s*(?:Name|Title)\b/i.test(line.text)) {
+      const labelItem = line.items.find((it) => /(?:A\/C|Account)\s*(?:Name|Title)/i.test(it.text));
+      const rightLabelItem = line.items.find(
+        (it) =>
+          (!labelItem || it.x > labelItem.x + 120) &&
+          /^(?:Opening\s*Date|Type\s+of|Last\s+Tr|Account\s+Status|Date\s+From|Mobile|Phone|Old\s*A\/C)/i.test(
+            it.text.trim()
+          )
+      );
+      if (labelItem) {
+        const valItems = line.items.filter(
+          (it) =>
+            it.x > labelItem.x + 5 &&
+            (!rightLabelItem || it.x < rightLabelItem.x - 5) &&
+            it.text.trim() !== ':' &&
+            !/(?:A\/C|Account)\s*(?:Name|Title)/i.test(it.text)
+        );
+        const joined = cleanText(valItems.map((it) => it.text.trim()).join(' ').replace(/^:\s*/, ''));
+        if (joined) {
+          accountName = joined;
+        }
+      }
+      if (!accountName) {
+        const extracted = extractAccountNameFromLineText(line.text);
+        if (extracted) accountName = extracted;
+      }
     }
   }
 
@@ -1170,6 +1219,7 @@ export async function parseAccountStatementPdf(
 
   return setCachedParse('acctStmt', file, {
     data: {
+      accountName,
       accountNumber: acNo,
       acNo,
       branchName,
@@ -1394,14 +1444,24 @@ export async function parseCostOfFundFile(
   const { lines, rawText } = await extractPdfLines(file);
   onStage?.('Extracting cost of fund...');
   let surplusDeficitBDT: number | null = null;
-  for (const line of lines) {
-    if (/surpluse?\s*\/?\s*deficit\s+of\s+realization\s+over\s+cost\s+of\s+fund/i.test(line.text)) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/surpluse?\s*\/?\s*deficit\s+of\s+realization(?:\s+over\s+cost\s+of\s+fund)?/i.test(line.text)) {
       const nums = line.items
         .map((it) => parseIndianNumber(it.text))
         .filter((n): n is number => n !== null);
       if (nums.length > 0) {
         surplusDeficitBDT = nums[nums.length - 1];
         break;
+      }
+      if (i + 1 < lines.length) {
+        const nextNums = lines[i + 1].items
+          .map((it) => parseIndianNumber(it.text))
+          .filter((n): n is number => n !== null);
+        if (nextNums.length > 0) {
+          surplusDeficitBDT = nextNums[nextNums.length - 1];
+          break;
+        }
       }
     }
   }

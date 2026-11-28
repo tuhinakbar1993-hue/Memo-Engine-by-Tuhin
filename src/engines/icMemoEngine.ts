@@ -13,7 +13,12 @@ import type {
   StageMemoInputs,
   StageScrutinySectionKey,
 } from '../types/memo';
-import { bdtToMillionStr, formatMillionNumber, parseIndianNumber } from '../utils/numberFormat';
+import {
+  bdtToMillionStr,
+  formatMillionNumber,
+  formatMillionString,
+  parseIndianNumber,
+} from '../utils/numberFormat';
 
 export interface PlaceholderSpec {
   code: string;
@@ -23,7 +28,7 @@ export interface PlaceholderSpec {
 
 export const IC_PLACEHOLDER_SPECS: PlaceholderSpec[] = [
   { code: '#1#', label: 'Proposal Date', source: 'Manual Inputs' },
-  { code: '#2#', label: 'Account Number / Name of Concern', source: 'Account Statement (Account number)' },
+  { code: '#2#', label: 'A/C Name', source: 'Account Statement (A/C Name)' },
   { code: '#3#', label: 'Branch Name', source: 'Account Statement (2nd line)' },
   { code: '#4#', label: 'Waiver Amount (Million BDT)', source: 'Manual Inputs' },
   { code: '#5#', label: 'Mode / Product Name', source: 'Party Performance (Product Name)' },
@@ -149,17 +154,29 @@ export function resolveICMemo(
     }
   }
 
+  if (mergedBp) {
+    mergedBp.limitOriginal = formatMillionString(mergedBp.limitOriginal);
+    mergedBp.sec2Limit = formatMillionString(mergedBp.sec2Limit);
+    mergedBp.sec2Overdue = formatMillionString(mergedBp.sec2Overdue);
+    mergedBp.sec2Recovery = formatMillionString(mergedBp.sec2Recovery);
+    if (mergedBp.section10Particulars.limitOfInvestment) {
+      mergedBp.section10Particulars.limitOfInvestment = formatMillionString(
+        mergedBp.section10Particulars.limitOfInvestment
+      );
+    }
+  }
+
   const base: Record<string, string> = {
     // 5.1 Manual Inputs
     '#1#': manual.proposalDate.trim(),
-    '#4#': manual.waiverAmount.trim(),
-    '#27#': manual.settlementAmount.trim(),
+    '#4#': formatMillionString(manual.waiverAmount),
+    '#27#': formatMillionString(manual.settlementAmount),
     '#28#': manual.settlementPeriod.trim(),
-    '#45#': manual.waiverRecClientBranch.trim(),
-    '#47#': manual.waiverRecHO.trim(),
+    '#45#': formatMillionString(manual.waiverRecClientBranch),
+    '#47#': formatMillionString(manual.waiverRecHO),
 
     // 5.2 Account Statement
-    '#2#': stmt?.accountNumber?.trim() || '',
+    '#2#': stmt?.accountName?.trim() || '',
     '#36#': stmt?.acNo?.trim() || '',
     '#3#': stmt?.branchName?.trim() || '',
     '#69#': stmt?.customerId?.trim() || '',
@@ -182,24 +199,25 @@ export function resolveICMemo(
     // 5.5 Overdue
     '#59#': ovd ? bdtToMillionStr(ovd.overdueAmountBDT) : '',
 
-    // 5.6 CIB Report (authoritative CIB Report first, fallback to Branch Proposal sec 4 or manual Sec 4 edit)
+    // 5.6 CIB Report (AI Section 4 scrutiny of Branch Proposal when scrutinized, else CIB Report / Branch Proposal sec 4)
     '#62#':
-      manualEdited.sec4CibStatus && ai.sec4CibStatus
-        ? ai.sec4CibStatus.cibDate.trim() || cib?.cibDate?.trim() || ''
-        : cib?.cibDate?.trim() || ai.sec4CibStatus?.cibDate?.trim() || bp?.section4CibDate?.trim() || '',
+      ai.sec4CibStatus?.cibDate?.trim() ||
+      cib?.cibDate?.trim() ||
+      bp?.section4CibDate?.trim() ||
+      '',
 
-    // 5.7 Cost of Fund
+    // 5.7 Cost of Fund (Surpluse/Deficit of realization over cost of fund -> Million BDT)
     '#31#': cof ? bdtToMillionStr(cof.surplusDeficitBDT) : '',
 
-    // 5.8 Branch Proposal (already in Million BDT — copy as written)
-    '#6#': bp?.limitOriginal?.trim() || '',
-    '#33#': bp?.securityMV?.trim() || '',
-    '#34#': bp?.securityFSV?.trim() || '',
+    // 5.8 Branch Proposal (already in Million BDT — formatted to 3 decimal places when numeric)
+    '#6#': formatMillionString(bp?.limitOriginal) || formatMillionString(bp?.sec2Limit) || '',
+    '#33#': formatMillionString(bp?.securityMV),
+    '#34#': formatMillionString(bp?.securityFSV),
     '#54#':
       ai.sec1NatureOfBusiness !== null
         ? ai.sec1NatureOfBusiness.trim()
         : bp?.natureOfBusiness?.trim() || '',
-    '#56#': mergedBp?.sec2Limit?.trim() || '',
+    '#56#': formatMillionString(mergedBp?.sec2Limit),
     '#58#': mergedBp?.sec2Validity?.trim() || '',
     '#64#': bp?.referenceNo?.trim() || '',
     '#65#': bp?.proposalDate?.trim() || '',
@@ -208,11 +226,34 @@ export function resolveICMemo(
     '#51#': ai.justification !== null ? ai.justification.trim() : '',
   };
 
+  const MILLION_DECIMAL_CODES = new Set([
+    '#4#',
+    '#6#',
+    '#7#',
+    '#8#',
+    '#10#',
+    '#11#',
+    '#12#',
+    '#25#',
+    '#27#',
+    '#31#',
+    '#33#',
+    '#34#',
+    '#35#',
+    '#45#',
+    '#47#',
+    '#56#',
+    '#59#',
+    '#60#',
+  ]);
+
   // Apply non-calculated manual overrides first so calculated fields react to user edits
   const resolved: Record<string, string> = { ...base };
   for (const [key, val] of Object.entries(overrides)) {
     if (key !== '#32#' && key !== '#42#' && key !== '#44#' && val !== undefined) {
-      resolved[key] = val.trim();
+      resolved[key] = MILLION_DECIMAL_CODES.has(key)
+        ? formatMillionString(val)
+        : val.trim();
     }
   }
 
@@ -239,7 +280,7 @@ export function resolveICMemo(
   // Allow direct override on calculated fields if explicitly edited
   for (const calcKey of ['#32#', '#42#', '#44#']) {
     if (overrides[calcKey] !== undefined && overrides[calcKey].trim() !== '') {
-      resolved[calcKey] = overrides[calcKey].trim();
+      resolved[calcKey] = formatMillionString(overrides[calcKey]);
     }
   }
 

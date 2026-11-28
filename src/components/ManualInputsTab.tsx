@@ -378,7 +378,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                   type="text"
                   value={manualInputs.waiverAmount}
                   onChange={(e) => onManualChange('waiverAmount', e.target.value)}
-                  placeholder="e.g. 0.06"
+                  placeholder="e.g. 0.060"
                   className="w-full px-3 py-2 text-sm font-mono-tabular bg-white border border-slate-300 rounded-md focus:outline-none focus:border-emerald-700"
                 />
               </div>
@@ -391,7 +391,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                   type="text"
                   value={manualInputs.settlementAmount}
                   onChange={(e) => onManualChange('settlementAmount', e.target.value)}
-                  placeholder="e.g. 0.22"
+                  placeholder="e.g. 0.220"
                   className="w-full px-3 py-2 text-sm font-mono-tabular bg-white border border-slate-300 rounded-md focus:outline-none focus:border-emerald-700"
                 />
               </div>
@@ -417,7 +417,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                   type="text"
                   value={manualInputs.waiverRecClientBranch}
                   onChange={(e) => onManualChange('waiverRecClientBranch', e.target.value)}
-                  placeholder="e.g. 0.06"
+                  placeholder="e.g. 0.060"
                   className="w-full px-3 py-2 text-sm font-mono-tabular bg-white border border-slate-300 rounded-md focus:outline-none focus:border-emerald-700"
                 />
               </div>
@@ -430,7 +430,7 @@ export const ManualInputsTab: React.FC<ManualInputsTabProps> = ({
                   type="text"
                   value={manualInputs.waiverRecHO}
                   onChange={(e) => onManualChange('waiverRecHO', e.target.value)}
-                  placeholder="e.g. 0.06"
+                  placeholder="e.g. 0.060"
                   className="w-full px-3 py-2 text-sm font-mono-tabular bg-white border border-slate-300 rounded-md focus:outline-none focus:border-emerald-700"
                 />
               </div>

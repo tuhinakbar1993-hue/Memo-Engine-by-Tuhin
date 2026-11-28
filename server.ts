@@ -99,17 +99,18 @@ function getScrutinyConfig(section: ScrutinySectionKey): {
     case 'justification':
       return {
         prompt: `Scrutinize the uploaded Branch Proposal (especially "Justification of The Proposed Facility", subject/terms, business/distress background, recovery/down payment details, and branch recommendations) together with verified memo figures below.
-Write clean, formal banking text strictly for IC Memo item "Justification of The Proposed Facility:" ("a.").
-Format as exactly 3 numbered justification points separated by newlines ("1. ...", "2. ...", "3. ..."), covering:
+Write clean, formal banking text strictly for IC Memo item "Justification of The Proposed Facility:" ("a.") filling up ONLY points 1, 2, and 3.
+STRICT FORMAT: Output points 1, 2, and 3 in EXACTLY three (3) concise single-line statements separated by single newlines ("1. ...", "2. ...", "3. ..."), covering:
 1. Client's current business/financial position and genuine distress reflected in the Branch Proposal.
-2. Recovery and settlement rationale (down payment, principal/Cost of Fund recovery, and protection of bank interest) grounded strictly in the Branch Proposal and provided figures.
+2. Recovery and settlement rationale (down payment, principal/Cost of Fund recovery, and protection of bank interest) grounded strictly in the Branch Proposal and provided figures (Million BDT up to 3 decimal places).
 3. Immediate reduction/regularization of classified NPL exposure and avoidance of prolonged litigation.
-CRITICAL CLEAN-TEXT RULES: Output ONLY formal banking justification points in "text". Do NOT include conversational openings, AI notes, or explanations ("Based on the uploaded document", "Here is...", etc.), and do NOT use markdown asterisks.
+IMPORTANT: Do NOT include points 4 or 5 (fraud/forgery and willful defaulter statements are fixed separately in the memo and must remain unchanged). Keep each of lines 1, 2, and 3 to one concise line without extra blank lines.
+CRITICAL CLEAN-TEXT RULES: Output ONLY formal banking justification lines 1, 2, and 3 in "text". Do NOT include conversational openings, AI notes, or explanations ("Based on the uploaded document", "Here is...", etc.), and do NOT use markdown asterisks.
 If the Branch Proposal lacks information needed for this section, include ONLY what is factually supported (or "" if none) in "text" and explain what is unavailable strictly inside "insufficientReason".`,
         schema: {
           type: Type.OBJECT,
           properties: {
-            text: strField('Clean official banking justification points (1., 2., 3.) with no AI notes or disclaimers, or "" if source info is completely absent.'),
+            text: strField('Exactly 3 concise numbered lines (1., 2., 3.) separated by newlines with no AI notes or asterisks, or "" if source info is completely absent.'),
             insufficientReason: strField('Empty string "" if sufficiently supported; otherwise brief software UI note stating what info was unavailable in Branch Proposal.'),
           },
           required: ['text', 'insufficientReason'],
@@ -136,7 +137,7 @@ If the Branch Proposal does not state the nature of business, set "text" to "" a
       return {
         prompt: `Scrutinize Section "2. Liability Position of the Clients and Its Sister Concerns with Our Bank" in the uploaded Branch Proposal.
 Extract strictly what appears in the Branch Proposal:
-- limit: Sanctioned limit in Million BDT (e.g. "0.50" or "0.50 Million"; "" if absent).
+- limit: Sanctioned limit in Million BDT up to 3 decimal places (e.g. "0.500" or "0.500 Million"; "" if absent).
 - validity: Validity / expiry date and status (e.g. "01.09.2025 (Exp.)"; "" if absent).
 - remarks: Exact remarks in Section 2 table ("" if blank).
 - nonFundedNote: Exact Non-Funded or sister concern note in Section 2 table ("" if blank/Nil).
@@ -199,12 +200,12 @@ Extract every row present in Section 3 of the Branch Proposal into "rows" (with 
 
     case 'sec4CibStatus':
       return {
-        prompt: `Scrutinize Section "4. CIB Status" in the uploaded Branch Proposal thoroughly.
-Extract:
-- cibDate: The CIB report date mentioned in Section 4 of the Branch Proposal (e.g. "17.11.2026"), or "" if absent.
-- rows: Extract the exact values from the Section 4 CIB Status table for each status row (STD, SMA, SS, DF, BL, Willful Default (WD), Write-Off, Non-Funded, Stay Order, TOTAL) across columns: status, unitBorrower, unitGuarantor, otherBorrower, otherGuarantor, remarks.
-- Fix obvious scanner/OCR typos ONLY when clearly verifiable from the visual table image (e.g. "Nit" -> "Nil", "10/-" if actually "0/-" or "10/-" per image — read the visual page image carefully!). Leave genuinely blank cells as "". Do NOT invent figures.
-- summary: Write 1-2 formal banking sentences summarizing the CIB status as recorded in the Branch Proposal (or clearly state if CIB information is unavailable/insufficient in the Branch Proposal).`,
+        prompt: `Scrutinize the Branch Proposal's "4. CIB Status: Report dated …….. shows:" section thoroughly and fill up the corresponding CIB status fields.
+Extract strictly what is recorded in Section 4 of the uploaded Branch Proposal (do NOT invent, assume, or introduce any unsupported information from outside Section 4):
+- cibDate: The exact CIB report date stated in "4. CIB Status: Report dated ... shows:" of the Branch Proposal (e.g. "17.11.2026"), or "" if blank/not stated.
+- rows: Extract every status row shown in the Branch Proposal's Section 4 CIB Status table (STD, SMA, SS, DF, BL, Willful Default (WD), Write-Off, Non-Funded, Stay Order, TOTAL) across columns: status, unitBorrower, unitGuarantor, otherBorrower, otherGuarantor, remarks.
+- Cross-verify against the attached visual page image of Section 4 to avoid OCR misreads (e.g. "Nit" -> "Nil", or reading exact digits/marks printed in the Branch Proposal's Section 4 table). Leave genuinely blank cells strictly as "". Do NOT invent, assume, or fill in unsupported figures.
+- summary: Write 1-2 concise formal banking sentences summarizing only the CIB status and findings explicitly stated in Section 4 of the Branch Proposal (or clearly note if CIB details are unavailable/incomplete in the Branch Proposal).`,
         schema: {
           type: Type.OBJECT,
           properties: {
@@ -622,18 +623,19 @@ Write clean formal content for IC Memo Section "14. Recommendation of Internal C
 
     case 'samdObservation':
       return {
-        prompt: `Thoroughly scrutinize the uploaded Branch Proposal together with the verified IC Memo figures below, and write Section "15. Observation and Recommendation of SAMD:" as Head Office SAMD.
-Write exactly five (5) substantive, formal banking points separated by newlines ("1. ...", "2. ...", "3. ...", "4. ...", "5. ...") addressing:
-1. Verification of total outstanding liability breakup, classification/overdue/CIB status, and confirmation of absence of fraud, forgery, or willful default per records.
-2. Assessment of primary & collateral security position/coverage, legal action status, and audit/regulatory compliance position.
-3. Cost of Fund & waiver adequacy analysis (down payment, recovery vs. principal/charges/Cost of Fund, maximum permissible waiver considering COF, and conformity with BRPD Circular Letter No. 23 dated 29.06.2026).
-4. Evaluation of the client's business/financial condition, Branch Visit findings, Branch Recommendation, and source of repayment.
-5. Formal SAMD recommendation placing the Exit with Waiver proposal before the Investment Committee for exit within the stipulated settlement period subject to compliance with special terms and conditions.
-CRITICAL CLEAN-TEXT RULES: Output ONLY crisp official SAMD memorandum points in "text". Do NOT add conversational remarks ("Here is...", "Based on the uploaded document..."), disclaimers, meta-commentary, or markdown asterisks. Ground every figure strictly in the Branch Proposal and context; record any missing source inputs in "insufficientReason".`,
+        prompt: `Thoroughly scrutinize all uploaded documents and verified IC Memo figures below, and write the Observation and Recommendation of SAMD as Head Office SAMD.
+STRICT FORMAT: Fill up this section in EXACTLY five (5) concise single-line numbered statements separated by single newlines ("1. ...", "2. ...", "3. ...", "4. ...", "5. ..."), covering strictly these five essential areas in exact order:
+1. Justification of the proposed facility (business distress/closure, recovery/settlement & Cost of Fund rationale, and NPL reduction grounded in the uploaded documents).
+2. Client history (business background, repayment/classification track record, overdue & CIB status, and absence of fraud/willful default per uploaded records).
+3. Collateral security (primary and collateral security details and MV/FSV valuation or absence/N/A per the uploaded documents).
+4. Legal cases (legal action/suit status strictly per Section 5 of the Branch Proposal and uploaded records).
+5. SAMD Recommendation (formal SAMD recommendation on the proposed Exit with Waiver terms, settlement amount/period, and compliance with applicable circulars/special terms).
+FINANCIAL STANDARD: Express all financial figures in Million BDT up to 3 decimal places (unless stated otherwise).
+CRITICAL CLEAN-TEXT RULES: Keep each of the 5 points to one concise, factual line supported strictly by the uploaded documents and context; do NOT invent, assume, or introduce unsupported details. Do NOT add conversational remarks ("Here is...", "Based on the uploaded document..."), disclaimers, meta-commentary, extra blank lines, or markdown asterisks. Record any missing source inputs strictly in "insufficientReason".`,
         schema: {
           type: Type.OBJECT,
           properties: {
-            text: strField('Clean official 5 numbered SAMD observation & recommendation points separated by newlines.'),
+            text: strField('Exactly 5 concise numbered SAMD observation & recommendation lines (1. Justification, 2. Client history, 3. Collateral security, 4. Legal cases, 5. SAMD Recommendation) separated by newlines.'),
             insufficientReason: strField('Empty string "" if supported; otherwise brief UI note listing missing source inputs.'),
           },
           required: ['text', 'insufficientReason'],
@@ -1087,6 +1089,7 @@ const SCRUTINY_SYSTEM_INSTRUCTION =
   'You are a Senior Credit Analyst at the Special Asset Management Division (SAMD), Head Office, Sammilito Islami Bank PLC (Union Bank PLC Unit), Dhaka. ' +
   'Your primary source document is the uploaded Branch Proposal (both its page images and extracted text). ' +
   'Scrutinize the Branch Proposal thoroughly and produce content strictly tailored to the requested IC Memo section. ' +
+  'FINANCIAL STANDARD: Express all financial figures in Million BDT up to 3 decimal places (e.g., "0.500", "0.280", "0.050"), unless stated otherwise. ' +
   'CRITICAL INTEGRITY RULE: Never invent, assume, or fabricate any facts, figures, dates, case numbers, valuations, names, observations, or recommendations not supported by the Branch Proposal (and verified memo figures provided in context). ' +
   'OUTPUT PURITY RULE: Output ONLY the official formal banking memorandum text/fields matching the section heading. NEVER add conversational remarks ("Here is...", "Based on the uploaded document..."), disclaimers, AI processing notes, scrutiny commentary, or markdown asterisks inside memo text. If required information is unavailable in the Branch Proposal, leave missing fields blank ("") and report what is missing strictly inside "insufficientReason" (or "summary" for structured tables).';
 
@@ -1431,6 +1434,13 @@ async function startServer() {
           samdContext.sec13BranchRecommendation = String(result.text);
         } else if (section === 'sec14IccdRecommendation' && result.text) {
           samdContext.sec14IccdRecommendation = String(result.text);
+        } else if (
+          section === 'sec4CibStatus' ||
+          section === 'sec5LegalAction' ||
+          section === 'sec7Security' ||
+          section === 'sec10ClientParticulars'
+        ) {
+          samdContext[section] = result;
         }
       };
 
@@ -1691,10 +1701,10 @@ ${resolved.source.rawText}${contextSuffix}`,
         }
       };
 
-      await Promise.all([
-        ...activeGroups.map((group) => runStreamingGroup(group)),
-        runSamdObservation(),
-      ]);
+      await Promise.all(activeGroups.map((group) => runStreamingGroup(group)));
+      if (includesSamd && !clientClosed) {
+        await runSamdObservation();
+      }
 
       if (!clientClosed) {
         writeEvent({ type: 'done', sourceId: resolved.source.sourceId });
@@ -1963,7 +1973,7 @@ ${promptBlocks.join('\n\n')}`;
             type: Type.ARRAY,
             items: kvSchema,
             description:
-              'List of {key, value} for placeholder codes found in the document from: #1# Proposal/Memo Date, #2# A/C Title & No, #3# Branch, #4# Proposed Waiver, #5# Mode of Investment, #6# Sanctioned Limit, #7# Principal Outstanding, #8# Charges, #10# Principal Balance for Settlement/COF, #11# Charged Profit, #12# Compensation, #25# NET Outstanding, #27# Settlement/Exit Amount, #28# Settlement Period, #31# Cost of Fund, #32# Breakup Total (10+8+11+12), #33# Security Market Value MV, #34# Security FSV, #35# Down Payment, #36# Down Payment Account, #42# Gross Balance for Max Waiver, #44# Max Permissible Waiver, #45# Surplus/Deficit vs COF, #47# Total Waiver Recommended, #51# Justification (3 points), #54# Nature of Business, #55# Classification Status (CL/DF/BL/SS), #56# First Sanction Date, #58# Expiry Date, #59# Uncharged Profit/Comp, #60# Last Repayment Date/Amt, #62# Provision Held, #64# Branch Proposal Ref No, #65# Branch Proposal Date, #68# Liability Cutoff Date, #69# CIS/Unique Customer ID.',
+              'List of {key, value} for placeholder codes found in the document from: #1# Proposal/Memo Date, #2# A/C Name (Account Name), #3# Branch, #4# Proposed Waiver, #5# Mode of Investment, #6# Original Limit, #7# Principal Outstanding, #8# Charges, #10# Charged Profit, #11# Compensation, #12# Uncharged Compensation, #25# NET Outstanding, #27# Settlement/Exit Amount, #28# Settlement Period, #31# Surpluse/Deficit of realization over cost of fund (Cost of Fund), #32# Breakup Total, #33# Security Market Value MV, #34# Security FSV, #35# Down Payment, #36# Down Payment Account No., #42# Total Profit+Comp+Unapplied, #44# Max Waiver Considering COF, #45# Waiver Recommended by Client & Branch, #47# Waiver Recommended by H/O, #51# Justification (3 points), #54# Nature of Business, #55# Sec. 2 Mode of Investment, #56# Sec. 2 Limit, #58# Sec. 2 Validity, #59# Overdue Amount, #60# Recovery Till Date, #62# CIB Report Date, #64# Branch Proposal Ref No, #65# Branch Proposal Date, #68# Liability Cutoff Date, #69# CIS/Unique Customer ID.',
           },
           manualInputs: {
             type: Type.OBJECT,
@@ -2252,7 +2262,7 @@ ${promptBlocks.join('\n\n')}`;
       const prompt = `You are a Senior Credit Analyst at SAMD, Head Office, Sammilito Islami Bank PLC.
 Carefully read, extract, identify, and scrutinize EVERY page, table, and narrative from the uploaded ${sourceRole} ("${source.fileName}") to prepare the ${targetRole}.
 NEVER omit, alter, or fabricate numbers, dates, account titles, or facts. Leave absent fields as "" and list any missing, unreadable, or inconsistent items inside "auditFindings.discrepanciesOrMissing".
-Keep all numeric figures strictly in Million BDT matching the document (clean numbers like "1.61" where appropriate for placeholders).
+Keep all numeric figures strictly in Million BDT up to 3 decimal places matching the document (clean numbers like "1.610" where appropriate for placeholders).
 
 Current User Stage Reference Inputs (use if document lacks them, or report if document differs):
 ${JSON.stringify(stageInputs ?? {})}
@@ -2623,14 +2633,14 @@ ${contextStr}`;
       const ai = aiClient.ai;
 
       const systemInstruction =
-        'You are a Senior Credit Analyst at the Special Asset Management Division (SAMD), Head Office, Sammilito Islami Bank PLC (Union Bank PLC Unit), Dhaka. Write formal, concise, objective banking memorandum prose strictly grounded in the provided document data and figures in Million BDT. Do not invent figures or facts not present in the context.';
+        'You are a Senior Credit Analyst at the Special Asset Management Division (SAMD), Head Office, Sammilito Islami Bank PLC (Union Bank PLC Unit), Dhaka. Write formal, concise, objective banking memorandum prose strictly grounded in the provided document data and figures in Million BDT up to 3 decimal places. Do not invent figures or facts not present in the context.';
 
       let userPrompt = '';
 
       if (section === 'justification') {
-        userPrompt = `Scrutinize the IC Memo data (placeholders, settlement/waiver figures, Cost of Fund, security, classification, source of repayment) and all relevant details of the Branch Proposal below, and write exactly 3 key and relevant justification points for placeholder #51# under "Justification of The Proposed Facility".
-Format as exactly 3 numbered justification points separated by newlines ("1. ...", "2. ...", "3. ..."), covering: (1) client's current business/financial position and genuine distress without willful default, (2) recovery & settlement math (down payment / principal / cost of fund coverage & protection of bank interest), and (3) immediate reduction of classified/NPL exposure and avoidance of prolonged litigation.
-Keep each point crisp, factual, and substantive (1-2 sentences each). Do NOT use markdown bolding or asterisks.
+        userPrompt = `Scrutinize the IC Memo data (placeholders, settlement/waiver figures, Cost of Fund, security, classification, source of repayment) and all relevant details of the Branch Proposal below, and write points 1, 2, and 3 for placeholder #51# under "Justification of The Proposed Facility".
+Format as EXACTLY 3 concise single-line numbered justification points separated by newlines ("1. ...", "2. ...", "3. ..."), covering: (1) client's current business/financial position and genuine distress without willful default, (2) recovery & settlement math (down payment / principal / cost of fund coverage & protection of bank interest in Million BDT up to 3 decimal places), and (3) immediate reduction of classified/NPL exposure and avoidance of prolonged litigation.
+Do NOT include points 4 or 5 (those remain unchanged in the memo). Keep each point to one concise line. Do NOT use markdown bolding or asterisks.
 
 Context:
 ${JSON.stringify(context, null, 2)}`;
@@ -2642,14 +2652,14 @@ Include the visiting officials' names/designations if available, visit date, cli
 Context:
 ${JSON.stringify(context, null, 2)}`;
       } else if (section === 'samdObservation') {
-        userPrompt = `Thoroughly scrutinize the IC Memo figures and sections (Principal, Charges, Charged Profit, Compensation, Uncharged Compensation, NET Outstanding, Cost of Fund Surplus/Deficit, Maximum Waiver Considering COF #44#, Down Payment, Proposed Waiver, Settlement/Exit Amount, Settlement Period, CIB & Classification status, Legal Action status, Audit/Regulatory status, Security MV/FSV, Source of Repayment, Branch Visit Report) and the relevant details of the Branch Proposal below, and write Section 15 "Observation and Recommendation of SAMD".
-Write exactly five (5) key and substantive justification points separated by newlines ("1. ...", "2. ...", "3. ...", "4. ...", "5. ...") reflecting SAMD's observations and recommendations, addressing:
-1. Verification of total outstanding liability breakup, classification/overdue/CIB status, and confirmation of absence of fraud, forgery, or willful default.
-2. Assessment of primary & collateral security valuation (MV/FSV coverage), legal action status, and audit/regulatory compliance position.
-3. Cost of Fund & waiver adequacy analysis (confirming down payment, recovery covering principal/charges/Cost of Fund, maximum permissible waiver considering COF, and conformity with BRPD Circular Letter No. 23 dated 29.06.2026).
-4. Evaluation of client's genuine business/financial condition, branch visit & branch recommendation findings, and viability of the proposed source of repayment within the settlement deadline.
-5. Formal SAMD recommendation to place the Exit with Waiver proposal before the Investment Committee for exit within the stipulated settlement period subject to compliance with special terms and conditions.
-Each point should be 1-2 substantive, formal banking sentences. Do NOT use markdown bolding or asterisks.
+        userPrompt = `Thoroughly scrutinize all uploaded documents and IC Memo figures/sections below, and write the Observation and Recommendation of SAMD.
+Format in EXACTLY five (5) concise single-line numbered points separated by newlines ("1. ...", "2. ...", "3. ...", "4. ...", "5. ..."), covering strictly these five essential areas in order:
+1. Justification of the proposed facility.
+2. Client history.
+3. Collateral security.
+4. Legal cases.
+5. SAMD Recommendation.
+Express all financial figures in Million BDT up to 3 decimal places. Ensure every observation and recommendation is relevant to the proposal and strictly supported by the uploaded documents without inventing unsupported facts. Do NOT use markdown bolding or asterisks.
 
 Context:
 ${JSON.stringify(context, null, 2)}`;

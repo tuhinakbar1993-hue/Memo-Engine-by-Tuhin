@@ -949,6 +949,13 @@ export function parseBranchProposalFromPdf(
     );
   }
 
+  if (!bp.limitOriginal) {
+    const candidate =
+      normalizeOcrNumericToken(bp.sec2Limit) ||
+      normalizeOcrNumericToken(bp.section10Particulars.limitOfInvestment);
+    if (candidate) bp.limitOriginal = candidate;
+  }
+
   return bp;
 }
 
@@ -1382,6 +1389,13 @@ export function parseBranchProposalFromStructured(
         });
       }
     }
+  }
+
+  if (!bp.limitOriginal) {
+    const candidate =
+      normalizeOcrNumericToken(bp.sec2Limit) ||
+      normalizeOcrNumericToken(bp.section10Particulars.limitOfInvestment);
+    if (candidate) bp.limitOriginal = candidate;
   }
 
   return bp;
